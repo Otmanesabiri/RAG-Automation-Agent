@@ -1,0 +1,1 @@
+2025-10-29 03:35:10 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log

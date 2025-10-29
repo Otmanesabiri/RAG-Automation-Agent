@@ -1,0 +1,45 @@
+# --- Core LLM & Orchestration ---
+langchain>=0.2.5
+langchain-core>=0.2.7
+langchain-community>=0.2.5
+langchain-openai>=0.1.7
+langchain-anthropic>=0.1.6
+langchain-elasticsearch>=0.1.0
+langchain-text-splitters>=0.2.1
+openai>=1.44.0
+anthropic>=0.32.0
+tiktoken>=0.7.0
+
+# --- Embeddings & Vectorization ---
+sentence-transformers>=3.0.1
+torch>=2.3.0
+transformers>=4.43.0
+
+# --- Document Ingestion ---
+pypdf>=4.2.0
+python-docx>=1.1.2
+beautifulsoup4>=4.12.3
+lxml>=5.2.2
+html5lib>=1.1
+unstructured>=0.15.7
+
+# --- Data Layer ---
+elasticsearch>=8.14.0
+elasticsearch-dsl>=8.14.0
+
+# --- API Layer ---
+flask>=3.0.3
+flask-cors>=4.0.0
+pydantic>=2.7.4
+python-dotenv>=1.0.1
+gunicorn>=22.0.0
+
+# --- Observability & Utils ---
+prometheus-client>=0.20.0
+loguru>=0.7.2
+tenacity>=8.3.0
+
+# --- Testing ---
+pytest>=8.2.0
+pytest-asyncio>=0.23.7
+responses>=0.25.3

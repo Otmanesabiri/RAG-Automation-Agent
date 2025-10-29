@@ -1,0 +1,41 @@
+{
+  "settings": {
+    "index": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "knn": true
+    },
+    "analysis": {
+      "analyzer": {
+        "rebuilt_standard": {
+          "tokenizer": "standard",
+          "filter": [
+            "lowercase",
+            "asciifolding"
+          ]
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "id": { "type": "keyword" },
+      "content": {
+        "type": "text",
+        "analyzer": "rebuilt_standard"
+      },
+      "metadata": {
+        "type": "object",
+        "enabled": true
+      },
+      "embedding": {
+        "type": "dense_vector",
+        "dims": 1536,
+        "index": true,
+        "similarity": "cosine"
+      },
+      "created_at": { "type": "date" },
+      "source": { "type": "keyword" }
+    }
+  }
+}

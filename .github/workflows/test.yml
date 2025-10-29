@@ -1,0 +1,127 @@
+name: Test
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    services:
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:8.14.0
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: false
+          ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd "curl -f http://localhost:9200/_cluster/health || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov pytest-mock pytest-asyncio httpx
+
+    - name: Wait for Elasticsearch
+      run: |
+        for i in {1..30}; do
+          if curl -s http://localhost:9200/_cluster/health; then
+            echo "Elasticsearch is ready"
+            break
+          fi
+          echo "Waiting for Elasticsearch... ($i/30)"
+          sleep 2
+        done
+
+    - name: Create test environment file
+      run: |
+        cat > .env.test << EOF
+        OPENAI_API_KEY=test-key-fake
+        ANTHROPIC_API_KEY=test-key-fake
+        ELASTICSEARCH_URL=http://localhost:9200
+        ELASTICSEARCH_USERNAME=
+        ELASTICSEARCH_PASSWORD=
+        ELASTICSEARCH_INDEX=test_rag_documents
+        FLASK_ENV=testing
+        SECRET_KEY=test-secret-key-12345
+        LOG_LEVEL=DEBUG
+        LOG_FILE=logs/test.log
+        AUTH_ENABLED=false
+        API_KEYS=test-key-123
+        RATE_LIMIT_RPM=1000
+        PROMETHEUS_PORT=9000
+        EOF
+
+    - name: Run tests with coverage
+      env:
+        PYTHONPATH: ${{ github.workspace }}
+      run: |
+        pytest tests/ \
+          --cov=src \
+          --cov-report=xml \
+          --cov-report=html \
+          --cov-report=term-missing \
+          --junitxml=test-results.xml \
+          -v \
+          --tb=short
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results-${{ matrix.python-version }}
+        path: |
+          test-results.xml
+          htmlcov/
+          coverage.xml
+
+    - name: Generate test summary
+      if: always()
+      run: |
+        echo "## Test Results 🧪" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Python ${{ matrix.python-version }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        if [ -f test-results.xml ]; then
+          echo "✅ Tests completed" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Tests failed" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: Comment PR with coverage
+      if: github.event_name == 'pull_request'
+      uses: py-cov-action/python-coverage-comment-action@v3
+      with:
+        GITHUB_TOKEN: ${{ github.token }}
+        MINIMUM_GREEN: 80
+        MINIMUM_ORANGE: 60

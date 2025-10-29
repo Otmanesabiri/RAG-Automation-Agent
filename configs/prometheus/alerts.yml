@@ -1,0 +1,281 @@
+groups:
+  - name: rag_agent_alerts
+    interval: 30s
+    rules:
+      # ===========================
+      # High Error Rate Alerts
+      # ===========================
+      - alert: HighErrorRate
+        expr: |
+          (
+            rate(rag_agent_requests_total{status=~"5.."}[5m])
+            /
+            rate(rag_agent_requests_total[5m])
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+          runbook_url: "https://github.com/Otmanesabiri/RAG-Automation-Agent/blob/main/docs/runbooks/high-error-rate.md"
+
+      - alert: ModerateErrorRate
+        expr: |
+          (
+            rate(rag_agent_requests_total{status=~"5.."}[5m])
+            /
+            rate(rag_agent_requests_total[5m])
+          ) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "Moderate error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 1%)"
+
+      # ===========================
+      # Latency Alerts
+      # ===========================
+      - alert: HighLatencyP95
+        expr: |
+          histogram_quantile(0.95, 
+            rate(rag_agent_request_duration_seconds_bucket[5m])
+          ) > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "High P95 latency detected"
+          description: "P95 latency is {{ $value }}s (threshold: 10s)"
+          runbook_url: "https://github.com/Otmanesabiri/RAG-Automation-Agent/blob/main/docs/runbooks/high-latency.md"
+
+      - alert: CriticalLatencyP99
+        expr: |
+          histogram_quantile(0.99, 
+            rate(rag_agent_request_duration_seconds_bucket[5m])
+          ) > 30
+        for: 3m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "Critical P99 latency detected"
+          description: "P99 latency is {{ $value }}s (threshold: 30s)"
+          runbook_url: "https://github.com/Otmanesabiri/RAG-Automation-Agent/blob/main/docs/runbooks/high-latency.md"
+
+      # ===========================
+      # LLM Query Performance
+      # ===========================
+      - alert: SlowLLMQueries
+        expr: |
+          rate(rag_agent_llm_requests_duration_seconds_sum[5m])
+          /
+          rate(rag_agent_llm_requests_duration_seconds_count[5m])
+          > 15
+        for: 5m
+        labels:
+          severity: warning
+          component: llm
+        annotations:
+          summary: "Slow LLM query responses"
+          description: "Average LLM response time is {{ $value }}s (threshold: 15s)"
+
+      # ===========================
+      # Cost Alerts
+      # ===========================
+      - alert: HighTokenUsage
+        expr: |
+          rate(rag_agent_llm_tokens_total[1h]) > 1000000
+        for: 10m
+        labels:
+          severity: warning
+          component: cost
+        annotations:
+          summary: "High token usage detected"
+          description: "Token usage rate is {{ $value }} tokens/s"
+          runbook_url: "https://github.com/Otmanesabiri/RAG-Automation-Agent/blob/main/docs/runbooks/cost-optimization.md"
+
+      - alert: EstimatedHighCost
+        expr: |
+          (
+            sum(increase(rag_agent_llm_tokens_total{type="prompt"}[1h])) * 0.00001 +
+            sum(increase(rag_agent_llm_tokens_total{type="completion"}[1h])) * 0.00003
+          ) > 100
+        for: 5m
+        labels:
+          severity: critical
+          component: cost
+        annotations:
+          summary: "High estimated hourly cost"
+          description: "Estimated cost is ${{ $value }}/hour (threshold: $100/hour)"
+
+      # ===========================
+      # Resource Exhaustion
+      # ===========================
+      - alert: ElasticsearchDown
+        expr: up{job="elasticsearch"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "Elasticsearch is down"
+          description: "Elasticsearch has been down for more than 2 minutes"
+          runbook_url: "https://github.com/Otmanesabiri/RAG-Automation-Agent/blob/main/docs/runbooks/elasticsearch-down.md"
+
+      - alert: HighMemoryUsage
+        expr: |
+          (
+            node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes
+          ) / node_memory_MemTotal_bytes > 0.90
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value | humanizePercentage }} (threshold: 90%)"
+
+      - alert: HighCPUUsage
+        expr: |
+          100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is {{ $value }}% (threshold: 80%)"
+
+      - alert: DiskSpaceRunningOut
+        expr: |
+          (
+            node_filesystem_avail_bytes{mountpoint="/"}
+            /
+            node_filesystem_size_bytes{mountpoint="/"}
+          ) < 0.10
+        for: 5m
+        labels:
+          severity: critical
+          component: infrastructure
+        annotations:
+          summary: "Disk space running out"
+          description: "Only {{ $value | humanizePercentage }} disk space remaining (threshold: 10%)"
+
+      # ===========================
+      # Service Availability (SLO)
+      # ===========================
+      - alert: SLOViolation
+        expr: |
+          (
+            1 - (
+              rate(rag_agent_requests_total{status=~"5.."}[5m])
+              /
+              rate(rag_agent_requests_total[5m])
+            )
+          ) < 0.999
+        for: 10m
+        labels:
+          severity: critical
+          component: slo
+        annotations:
+          summary: "SLO violation: Availability below 99.9%"
+          description: "Current availability is {{ $value | humanizePercentage }} (SLO: 99.9%)"
+          runbook_url: "https://github.com/Otmanesabiri/RAG-Automation-Agent/blob/main/docs/runbooks/slo-violation.md"
+
+      # ===========================
+      # Rate Limiting
+      # ===========================
+      - alert: HighRateLimitHits
+        expr: |
+          rate(rag_agent_rate_limit_hits_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: "High rate limit violations"
+          description: "Rate limit hit {{ $value }} times/s (possible DoS attack)"
+
+      # ===========================
+      # Ingestion Pipeline
+      # ===========================
+      - alert: IngestionFailures
+        expr: |
+          rate(rag_agent_ingestion_failures_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: ingestion
+        annotations:
+          summary: "High ingestion failure rate"
+          description: "Ingestion failures at {{ $value }} failures/s"
+
+      - alert: EmbeddingServiceDown
+        expr: |
+          rate(rag_agent_embedding_errors_total[5m]) > 0.5
+        for: 3m
+        labels:
+          severity: critical
+          component: embeddings
+        annotations:
+          summary: "Embedding service experiencing high error rate"
+          description: "Embedding errors at {{ $value }} errors/s"
+
+      # ===========================
+      # Dead Letter Queue
+      # ===========================
+      - alert: DeadLetterQueueGrowing
+        expr: |
+          rag_agent_dlq_size > 100
+        for: 10m
+        labels:
+          severity: warning
+          component: queue
+        annotations:
+          summary: "Dead letter queue growing"
+          description: "DLQ size is {{ $value }} messages (threshold: 100)"
+
+      # ===========================
+      # Health Check Failures
+      # ===========================
+      - alert: HealthCheckFailing
+        expr: |
+          up{job="rag-agent"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: health
+        annotations:
+          summary: "RAG Agent health check failing"
+          description: "Health check has been failing for more than 1 minute"
+          runbook_url: "https://github.com/Otmanesabiri/RAG-Automation-Agent/blob/main/docs/runbooks/health-check-failure.md"
+
+      # ===========================
+      # SSL Certificate Expiry
+      # ===========================
+      - alert: SSLCertificateExpiringSoon
+        expr: |
+          (probe_ssl_earliest_cert_expiry - time()) / 86400 < 30
+        for: 1h
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: "SSL certificate expiring soon"
+          description: "SSL certificate expires in {{ $value }} days"
+
+      - alert: SSLCertificateExpiring
+        expr: |
+          (probe_ssl_earliest_cert_expiry - time()) / 86400 < 7
+        for: 1h
+        labels:
+          severity: critical
+          component: security
+        annotations:
+          summary: "SSL certificate expiring in 7 days"
+          description: "SSL certificate expires in {{ $value }} days - URGENT ACTION REQUIRED"

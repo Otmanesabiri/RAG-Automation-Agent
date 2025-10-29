@@ -1,0 +1,182 @@
+global:
+  resolve_timeout: 5m
+  smtp_from: 'alertmanager@rag-agent.com'
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_auth_username: '${SMTP_USERNAME}'
+  smtp_auth_password: '${SMTP_PASSWORD}'
+  smtp_require_tls: true
+
+  # Slack configuration
+  slack_api_url: '${SLACK_WEBHOOK_URL}'
+
+  # PagerDuty configuration
+  pagerduty_url: 'https://events.pagerduty.com/v2/enqueue'
+
+# Templates for notification messages
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# Main routing tree
+route:
+  receiver: 'default'
+  group_by: ['alertname', 'severity', 'component']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+  routes:
+    # Critical alerts go to PagerDuty and Slack immediately
+    - match:
+        severity: critical
+      receiver: 'critical-pagerduty'
+      group_wait: 10s
+      repeat_interval: 1h
+      continue: true
+
+    - match:
+        severity: critical
+      receiver: 'critical-slack'
+      group_wait: 10s
+
+    # Warning alerts go to Slack only
+    - match:
+        severity: warning
+      receiver: 'warning-slack'
+      group_wait: 1m
+      repeat_interval: 12h
+
+    # Cost alerts (special handling)
+    - match:
+        component: cost
+      receiver: 'cost-team-email'
+      group_wait: 5m
+      repeat_interval: 6h
+
+    # Security alerts
+    - match:
+        component: security
+      receiver: 'security-team'
+      group_wait: 30s
+      repeat_interval: 2h
+
+    # Infrastructure alerts
+    - match:
+        component: infrastructure
+      receiver: 'ops-team-email'
+      repeat_interval: 6h
+
+# Inhibition rules (prevent alert spam)
+inhibit_rules:
+  # If service is down, don't alert on high latency
+  - source_match:
+      alertname: 'HealthCheckFailing'
+    target_match:
+      alertname: 'HighLatencyP95'
+    equal: ['instance']
+
+  # If Elasticsearch is down, don't alert on query failures
+  - source_match:
+      alertname: 'ElasticsearchDown'
+    target_match_re:
+      alertname: '(IngestionFailures|SlowLLMQueries)'
+
+  # If there's an SLO violation, suppress individual error alerts
+  - source_match:
+      alertname: 'SLOViolation'
+    target_match:
+      alertname: 'HighErrorRate'
+
+# Receiver configurations
+receivers:
+  # Default receiver (catch-all)
+  - name: 'default'
+    email_configs:
+      - to: 'ops-team@rag-agent.com'
+        headers:
+          Subject: '[RAG Agent] {{ .GroupLabels.alertname }}'
+        html: '{{ template "email.html" . }}'
+
+  # Critical alerts - PagerDuty
+  - name: 'critical-pagerduty'
+    pagerduty_configs:
+      - service_key: '${PAGERDUTY_SERVICE_KEY}'
+        severity: 'critical'
+        description: '{{ .GroupLabels.alertname }}: {{ .Annotations.summary }}'
+        details:
+          firing: '{{ .Alerts.Firing | len }}'
+          resolved: '{{ .Alerts.Resolved | len }}'
+          description: '{{ .Annotations.description }}'
+          runbook: '{{ .Annotations.runbook_url }}'
+
+  # Critical alerts - Slack
+  - name: 'critical-slack'
+    slack_configs:
+      - channel: '#alerts-critical'
+        username: 'RAG Agent Alertmanager'
+        icon_emoji: ':fire:'
+        title: '🚨 CRITICAL: {{ .GroupLabels.alertname }}'
+        text: |-
+          *Summary:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Severity:* {{ .GroupLabels.severity }}
+          *Component:* {{ .GroupLabels.component }}
+          {{ if .Annotations.runbook_url }}*Runbook:* {{ .Annotations.runbook_url }}{{ end }}
+        color: 'danger'
+        send_resolved: true
+
+  # Warning alerts - Slack
+  - name: 'warning-slack'
+    slack_configs:
+      - channel: '#alerts-warnings'
+        username: 'RAG Agent Alertmanager'
+        icon_emoji: ':warning:'
+        title: '⚠️ WARNING: {{ .GroupLabels.alertname }}'
+        text: |-
+          *Summary:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Component:* {{ .GroupLabels.component }}
+        color: 'warning'
+        send_resolved: true
+
+  # Cost alerts - Email to finance team
+  - name: 'cost-team-email'
+    email_configs:
+      - to: 'finance-team@rag-agent.com,ops-lead@rag-agent.com'
+        headers:
+          Subject: '[RAG Agent] Cost Alert: {{ .GroupLabels.alertname }}'
+        html: |-
+          <h2>Cost Alert</h2>
+          <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
+          <p><strong>Summary:</strong> {{ .Annotations.summary }}</p>
+          <p><strong>Description:</strong> {{ .Annotations.description }}</p>
+          <p><strong>Runbook:</strong> <a href="{{ .Annotations.runbook_url }}">{{ .Annotations.runbook_url }}</a></p>
+
+  # Security alerts - Multiple channels
+  - name: 'security-team'
+    slack_configs:
+      - channel: '#security-alerts'
+        username: 'RAG Agent Security'
+        icon_emoji: ':lock:'
+        title: '🔒 SECURITY: {{ .GroupLabels.alertname }}'
+        text: |-
+          *Summary:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+        color: 'danger'
+    email_configs:
+      - to: 'security-team@rag-agent.com'
+        headers:
+          Subject: '[SECURITY] RAG Agent Alert: {{ .GroupLabels.alertname }}'
+        html: '{{ template "email.html" . }}'
+
+  # Infrastructure/Ops team
+  - name: 'ops-team-email'
+    email_configs:
+      - to: 'ops-team@rag-agent.com'
+        headers:
+          Subject: '[RAG Agent] Infrastructure Alert: {{ .GroupLabels.alertname }}'
+        html: |-
+          <h2>Infrastructure Alert</h2>
+          <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
+          <p><strong>Summary:</strong> {{ .Annotations.summary }}</p>
+          <p><strong>Description:</strong> {{ .Annotations.description }}</p>
+          <p><strong>Fired at:</strong> {{ .StartsAt }}</p>

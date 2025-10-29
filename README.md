@@ -88,5 +88,5 @@ The **RAG Automation Agent** is an enterprise-gra## 📚 Documentation & Design 
 - Définir des revues de code obligatoires et automatiser les contrôles via GitHub Actions.
 
 ## 📬 Contact
-Pour toute question, ouvrez une issue ou contactez l’équipe plateforme IA.
+Pour toute question, ouvrez une issue ou contactez l’équipe .
 # RAG-Automation-Agent

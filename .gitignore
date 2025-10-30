@@ -49,3 +49,19 @@ pip-delete-this-directory.txt
 
 # Local data
 /data/
+
+# Environment variables (SENSITIVE - Never commit!)
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+
+# Logs (may contain sensitive data)
+logs/
+*.log
+
+# Temporary files
+/tmp/
+*.tmp

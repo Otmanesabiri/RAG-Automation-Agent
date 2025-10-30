@@ -2,8 +2,7 @@
   "settings": {
     "index": {
       "number_of_shards": 1,
-      "number_of_replicas": 0,
-      "knn": true
+      "number_of_replicas": 0
     },
     "analysis": {
       "analyzer": {
@@ -30,7 +29,7 @@
       },
       "embedding": {
         "type": "dense_vector",
-        "dims": 1536,
+        "dims": 768,
         "index": true,
         "similarity": "cosine"
       },

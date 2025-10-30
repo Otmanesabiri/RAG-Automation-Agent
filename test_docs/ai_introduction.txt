@@ -1,0 +1,13 @@
+Introduction to Artificial Intelligence
+
+Artificial Intelligence (AI) is the simulation of human intelligence processes by machines, especially computer systems. These processes include learning (the acquisition of information and rules for using the information), reasoning (using rules to reach approximate or definite conclusions), and self-correction.
+
+AI applications include expert systems, natural language processing, speech recognition, and machine vision. AI has been used in a wide variety of fields including medical diagnosis, stock trading, robot control, law, scientific discovery, and toys.
+
+Deep Learning is a subset of machine learning that uses artificial neural networks with multiple layers to progressively extract higher-level features from raw input. For example, in image processing, lower layers may identify edges, while higher layers may identify human-meaningful concepts such as digits, letters, or faces.
+
+Machine Learning is a method of data analysis that automates analytical model building. It is a branch of artificial intelligence based on the idea that systems can learn from data, identify patterns, and make decisions with minimal human intervention.
+
+Natural Language Processing (NLP) is a branch of AI that helps computers understand, interpret, and manipulate human language. NLP draws from many disciplines, including computer science and computational linguistics.
+
+The history of AI began in antiquity with myths, stories, and rumors of artificial beings endowed with intelligence by master craftsmen. The seeds of modern AI were planted by classical philosophers who attempted to describe human thinking as a symbolic system.

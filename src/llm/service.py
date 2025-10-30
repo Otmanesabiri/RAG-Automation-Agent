@@ -145,6 +145,78 @@ class AnthropicLLMProvider(LLMProvider):
                 yield text
 
 
+class GeminiLLMProvider(LLMProvider):
+    """Google Gemini provider."""
+
+    def __init__(
+        self,
+        model: str = "gemini-2.0-flash-exp",
+        api_key: Optional[str] = None,
+    ) -> None:
+        try:
+            from google import genai
+        except ImportError as exc:
+            raise RuntimeError(
+                "google-genai package is required for GeminiLLMProvider. "
+                "Install with: pip install google-genai"
+            ) from exc
+
+        self.model = model
+        # Set API key in environment if provided
+        if api_key:
+            os.environ["GEMINI_API_KEY"] = api_key
+        elif not os.getenv("GEMINI_API_KEY"):
+            raise ValueError("GEMINI_API_KEY must be set in environment or passed as argument")
+        
+        self.client = genai.Client()
+
+    def generate(
+        self,
+        prompt: str,
+        *,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs: Any,
+    ) -> str:
+        # Build generation config
+        generation_config = {
+            "temperature": temperature,
+        }
+        if max_tokens:
+            generation_config["max_output_tokens"] = max_tokens
+        
+        response = self.client.models.generate_content(
+            model=self.model,
+            contents=prompt,
+            config=generation_config,
+        )
+        return response.text
+
+    def stream_generate(
+        self,
+        prompt: str,
+        *,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs: Any,
+    ):
+        # Build generation config
+        generation_config = {
+            "temperature": temperature,
+        }
+        if max_tokens:
+            generation_config["max_output_tokens"] = max_tokens
+        
+        response = self.client.models.generate_content_stream(
+            model=self.model,
+            contents=prompt,
+            config=generation_config,
+        )
+        for chunk in response:
+            if chunk.text:
+                yield chunk.text
+
+
 class LLMService:
     """Facade for LLM generation with provider abstraction."""
 
@@ -172,13 +244,17 @@ class LLMService:
         return self.provider.stream_generate(prompt, temperature=temperature, max_tokens=max_tokens, **kwargs)
 
     def _default_provider(self) -> LLMProvider:
-        """Select provider based on environment configuration."""
+        """Create default provider based on environment."""
         provider_name = os.getenv("LLM_PROVIDER", "openai").lower()
+
         if provider_name == "openai":
-            model = os.getenv("OPENAI_MODEL", "gpt-4o")
-            return OpenAILLMProvider(model=model)
+            return OpenAILLMProvider()
         elif provider_name == "anthropic":
-            model = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
-            return AnthropicLLMProvider(model=model)
+            return AnthropicLLMProvider()
+        elif provider_name == "gemini":
+            return GeminiLLMProvider()
         else:
-            raise ValueError(f"Unknown LLM provider: {provider_name}")
+            raise ValueError(
+                f"Unknown LLM provider: {provider_name}. "
+                "Supported providers: openai, anthropic, gemini"
+            )

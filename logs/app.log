@@ -1,1 +1,47 @@
 2025-10-29 03:35:10 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 13:15:42 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 13:22:55 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 13:24:04 | INFO     | src.api.routes:query_documents:91 - Executing RAG query: Qu'est-ce que l'IA?... (session=10c21ffb-90bf-437a-9c90-67abd174af16)
+2025-10-30 13:25:55 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 13:26:09 | INFO     | src.api.routes:query_documents:91 - Executing RAG query: Qu'est-ce que l'IA en une phrase?... (session=48f4bb60-ba13-4592-a21d-c8a9e3fe09e7)
+2025-10-30 13:27:07 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 13:27:15 | INFO     | src.api.routes:query_documents:91 - Executing RAG query: Qu'est-ce que l'IA en une phrase?... (session=96304ccd-8ab8-4d39-84e7-2b31b6d516d4)
+2025-10-30 13:29:49 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 13:29:55 | INFO     | src.api.routes:query_documents:91 - Executing RAG query: Qu'est-ce que l'IA en une phrase?... (session=bdefc7fc-8a85-43b9-9aaf-8cef5b5fae38)
+2025-10-30 13:58:46 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 13:59:16 | INFO     | src.api.routes:query_documents:91 - Executing RAG query: Qu'est-ce que l'IA en une phrase?... (session=c26e3e66-1022-484a-8cac-1fd4296a8c69)
+2025-10-30 14:03:15 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 14:14:59 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 14:16:10 | INFO     | src.api.routes:query_documents:91 - Executing RAG query: Qu'est-ce que l'IA en une phrase?... (session=18c7ab6b-29bb-43db-bfff-f7aa76f36ba4)
+2025-10-30 14:27:02 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 14:27:04 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 14:27:41 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 14:27:43 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 14:28:06 | INFO     | src.api.routes:query_documents:91 - Executing RAG query: What is AI in one sentence?... (session=c72bfffd-0459-4eac-86a2-d993c03403d9)
+2025-10-30 14:28:11 | INFO     | src.api.routes:query_documents:101 - RAG query completed, retrieved 0 sources
+2025-10-30 14:30:21 | INFO     | src.api.routes:query_documents:91 - Executing RAG query: What is deep learning in one sentence?... (session=79a95bba-8a29-4764-b4a3-3ee74185d889)
+2025-10-30 14:30:25 | INFO     | src.api.routes:query_documents:101 - RAG query completed, retrieved 0 sources
+2025-10-30 14:40:32 | INFO     | src.api.routes:ingest_documents:48 - Ingesting 1 documents from source=test
+2025-10-30 14:40:35 | INFO     | src.api.routes:ingest_documents:65 - Indexed 4 chunks for source=/tmp/rag_agent/uploaded-xpb77r_x.txt
+2025-10-30 14:40:35 | INFO     | src.api.routes:ingest_documents:48 - Ingesting 1 documents from source=test
+2025-10-30 14:40:36 | INFO     | src.api.routes:ingest_documents:65 - Indexed 3 chunks for source=/tmp/rag_agent/uploaded-xin349g_.txt
+2025-10-30 14:40:49 | INFO     | src.api.routes:query_documents:91 - Executing RAG query: What is artificial intelligence?... (session=1d61471a-edc6-4697-a6b9-6710e4e77cad)
+2025-10-30 14:40:53 | INFO     | src.api.routes:query_documents:101 - RAG query completed, retrieved 3 sources
+2025-10-30 14:41:42 | INFO     | src.api.routes:query_documents:91 - Executing RAG query: Explain supervised learning... (session=80388f54-facf-409d-ad5e-fcf90f72a944)
+2025-10-30 14:41:44 | INFO     | src.api.routes:query_documents:101 - RAG query completed, retrieved 3 sources
+2025-10-30 14:51:33 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 14:51:34 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 15:01:38 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 15:02:09 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 15:04:03 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 15:04:18 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 15:05:19 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 15:18:58 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 15:19:33 | INFO     | src.api.routes:ingest_documents:48 - Ingesting 1 documents from source=raw
+2025-10-30 15:19:36 | INFO     | src.api.routes:ingest_documents:65 - Indexed 1 chunks for source=/tmp/rag_agent/uploaded-hc4rmovo.txt
+2025-10-30 15:22:07 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 15:22:56 | INFO     | src.observability.logging:configure_logging:44 - Logging configured with level=INFO, file=logs/app.log
+2025-10-30 15:23:27 | INFO     | src.api.routes:ingest_documents:48 - Ingesting 1 documents from source=raw
+2025-10-30 15:23:28 | INFO     | src.api.routes:ingest_documents:65 - Indexed 1 chunks for source=/tmp/rag_agent/uploaded-siilllz3.txt
+2025-10-30 15:23:31 | INFO     | src.api.routes:query_documents:91 - Executing RAG query: What document formats does the RAG Agent support?... (session=3c1a30c7-c48a-41bf-925a-7711e8d5a445)
+2025-10-30 15:23:41 | INFO     | src.api.routes:query_documents:101 - RAG query completed, retrieved 3 sources

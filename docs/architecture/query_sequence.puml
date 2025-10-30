@@ -1,0 +1,104 @@
+@startuml RAG_Query_Sequence
+title RAG Query Flow - Sequence Complete
+skinparam monochrome true
+
+actor Client
+participant "API Gateway" as API
+participant "Auth" as Auth
+participant "RAG Service" as RAG
+participant "Embedding\nService" as Embed
+participant "Sentence\nTransformers" as ST
+database "Elasticsearch" as ES
+participant "Re-ranking\nService" as Rerank
+participant "Cross-Encoder" as CE
+participant "LLM Service" as LLM
+participant "Gemini API" as Gemini
+participant "Citation\nVerifier" as Citation
+participant "Prometheus" as Prom
+
+== Authentication ==
+Client -> API: POST /query\n{"query": "What is AI?"}
+activate API
+API -> Auth: validate_api_key()
+activate Auth
+Auth --> API: ✓ Valid
+deactivate Auth
+
+== Rate Limiting ==
+API -> API: check_rate_limit()
+note right: Max 60 req/min
+
+== Embedding Generation ==
+API -> RAG: query(text, top_k=3)
+activate RAG
+RAG -> Embed: embed(query)
+activate Embed
+Embed -> ST: encode("What is AI?")
+activate ST
+ST --> Embed: [768D vector]
+deactivate ST
+Embed --> RAG: query_embedding
+deactivate Embed
+
+== Vector Search ==
+RAG -> ES: similarity_search(\nvector, top_k=10)
+activate ES
+ES -> ES: HNSW ANN search
+ES --> RAG: 10 candidate docs\n(scores: 0.85, 0.82, ...)
+deactivate ES
+
+== Re-ranking ==
+RAG -> Rerank: rerank(query, docs, top_k=3)
+activate Rerank
+loop for each doc
+    Rerank -> CE: predict(query, doc)
+    activate CE
+    CE --> Rerank: score (0-10)
+    deactivate CE
+end
+Rerank --> RAG: Top 3 docs\n(scores: 8.05, 7.92, 7.31)
+deactivate Rerank
+
+== Context Preparation ==
+RAG -> RAG: prepare_context(\ndocs, prompt_type="strict")
+note right
+  Prompt: "Tu DOIS utiliser
+  UNIQUEMENT les sources...
+  [Source 1]: ...
+  [Source 2]: ...
+  [Source 3]: ..."
+end note
+
+== LLM Generation ==
+RAG -> LLM: generate(prompt, context)
+activate LLM
+LLM -> Gemini: POST /generateContent
+activate Gemini
+Gemini --> LLM: "AI is the simulation...\n[Source 1], [Source 2]"
+deactivate Gemini
+LLM --> RAG: answer + metadata
+deactivate LLM
+
+== Citation Verification ==
+RAG -> Citation: verify_citations(\nanswer, sources)
+activate Citation
+Citation -> Citation: check each [Source N]
+Citation --> RAG: ✓ All citations valid
+deactivate Citation
+
+== Response & Monitoring ==
+RAG --> API: {\n  "answer": "...",\n  "sources": [...],\n  "metadata": {...}\n}
+deactivate RAG
+API -> Prom: record_metrics(\nlatency, status)
+API --> Client: 200 OK + JSON
+deactivate API
+
+note over Client
+  Total latency: ~2-5s
+  - Embedding: 100ms
+  - Search: 50ms
+  - Re-rank: 200ms
+  - LLM: 2-4s
+end note
+
+@enduml

@@ -1,0 +1,188 @@
+@startuml RAG_Classes
+title RAG Agent - Architecture de Services
+skinparam monochrome true
+
+package "API Layer" {
+    class FlaskApp {
+        +create_app(): Flask
+        +register_routes()
+        +register_middleware()
+    }
+    
+    class Routes {
+        +health_check()
+        +ingest_documents()
+        +query_documents()
+        +get_metrics()
+    }
+    
+    class AuthMiddleware {
+        -api_keys: List[str]
+        +validate_api_key(key: str): bool
+        +require_auth()
+    }
+    
+    class RateLimiter {
+        -limit: int
+        +check_rate_limit(): bool
+    }
+}
+
+package "Core Services" {
+    class RAGService {
+        -llm_service: LLMService
+        -embedding_service: EmbeddingService
+        -vector_store: ElasticsearchStore
+        -reranker: RerankingService
+        +query(text: str, top_k: int): RAGResponse
+        +ingest(documents: List[Document])
+        -prepare_context(docs: List): str
+    }
+    
+    class LLMService {
+        -provider: LLMProvider
+        +generate(prompt: str, **kwargs): str
+        +stream_generate(prompt: str)
+        +get_provider(): str
+    }
+    
+    interface LLMProvider {
+        +generate(prompt: str): str
+        +stream_generate(prompt: str)
+    }
+    
+    class OpenAIProvider implements LLMProvider {
+        -api_key: str
+        -model: str = "gpt-4-turbo"
+    }
+    
+    class AnthropicProvider implements LLMProvider {
+        -api_key: str
+        -model: str = "claude-3-5-sonnet"
+    }
+    
+    class GeminiProvider implements LLMProvider {
+        -api_key: str
+        -model: str = "gemini-2.0-flash-exp"
+    }
+    
+    class EmbeddingService {
+        -provider: EmbeddingProvider
+        +embed(text: str): List[float]
+        +batch_embed(texts: List[str]): List[List[float]]
+    }
+    
+    interface EmbeddingProvider {
+        +embed(text: str): List[float]
+        +get_dimension(): int
+    }
+    
+    class SentenceTransformerProvider implements EmbeddingProvider {
+        -model_name: str
+        -model: SentenceTransformer
+        +get_dimension(): int = 768
+    }
+    
+    class RerankingService {
+        -cross_encoder: CrossEncoder
+        +rerank(query: str, docs: List, top_k: int): List[Document]
+        -calculate_scores(pairs: List): List[float]
+    }
+    
+    class CitationVerifier {
+        +verify_citations(answer: str, sources: List): bool
+        +extract_citations(answer: str): List[int]
+        +check_grounding(claim: str, sources: List): bool
+    }
+}
+
+package "Data Layer" {
+    class ElasticsearchStore {
+        -client: Elasticsearch
+        -index_name: str
+        +add_documents(docs: List[Document])
+        +similarity_search(query_vector: List, top_k: int): List[Document]
+        +delete_document(doc_id: str)
+        +create_index(settings: dict)
+    }
+    
+    class DocumentParser {
+        +parse_pdf(file: bytes): str
+        +parse_docx(file: bytes): str
+        +parse_html(content: str): str
+        +parse_text(content: str): str
+    }
+    
+    class TextSplitter {
+        -chunk_size: int = 512
+        -chunk_overlap: int = 50
+        +split_text(text: str): List[str]
+    }
+}
+
+package "Observability" {
+    class PrometheusMetrics {
+        -requests_total: Counter
+        -request_duration: Histogram
+        -active_requests: Gauge
+        +record_request(endpoint: str, status: int)
+        +record_latency(duration: float)
+    }
+    
+    class Logger {
+        -level: str
+        -file: str
+        +info(message: str, **kwargs)
+        +error(message: str, **kwargs)
+        +warning(message: str, **kwargs)
+    }
+}
+
+package "Models" {
+    class Document {
+        +id: str
+        +content: str
+        +embedding: List[float]
+        +metadata: dict
+        +source: str
+    }
+    
+    class RAGResponse {
+        +answer: str
+        +sources: List[SourceReference]
+        +metadata: dict
+    }
+    
+    class SourceReference {
+        +document_id: str
+        +score: float
+        +snippet: str
+        +source: str
+    }
+}
+
+' Relationships
+FlaskApp --> Routes
+FlaskApp --> AuthMiddleware
+FlaskApp --> RateLimiter
+Routes --> RAGService
+Routes --> PrometheusMetrics
+Routes --> Logger
+
+RAGService --> LLMService
+RAGService --> EmbeddingService
+RAGService --> ElasticsearchStore
+RAGService --> RerankingService
+RAGService --> CitationVerifier
+
+LLMService --> LLMProvider
+EmbeddingService --> EmbeddingProvider
+
+RAGService --> Document
+RAGService --> RAGResponse
+RAGResponse --> SourceReference
+
+DocumentParser --> TextSplitter
+ElasticsearchStore --> Document
+
+@enduml

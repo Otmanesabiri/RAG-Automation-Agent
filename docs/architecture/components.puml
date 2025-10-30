@@ -1,0 +1,120 @@
+@startuml RAG_Architecture_Components
+title RAG Automation Agent - Architecture Complete
+skinparam monochrome true
+skinparam componentStyle rectangle
+
+' External Actors
+actor "Client\n(Web/API)" as client #LightBlue
+actor "Admin" as admin #LightCoral
+
+' API Layer
+package "API Layer (Flask)" {
+    component [API Gateway\n:8000] as api #LightGreen
+    component [Auth Middleware] as auth #Orange
+    component [Rate Limiter\n60 req/min] as limiter #Orange
+    component [Routes Handler] as routes #LightGreen
+}
+
+' Application Services
+package "Application Services" {
+    component [RAG Service] as rag #LightBlue
+    component [LLM Service] as llm #LightBlue
+    component [Embedding Service] as embed #LightBlue
+    component [Document Parser] as parser #LightBlue
+    component [Re-ranking Service] as rerank #Yellow
+    component [Citation Verifier] as citation #Yellow
+}
+
+' LLM Providers
+package "LLM Providers (External)" {
+    component [OpenAI GPT-4] as openai #Lavender
+    component [Anthropic Claude] as anthropic #Lavender
+    component [Google Gemini\n2.0-flash] as gemini #Lavender
+}
+
+' Vector Store
+database "Elasticsearch\n:9200" as elastic #Coral {
+    component [rag_documents\nindex] as index
+    component [HNSW Index\n768D vectors] as hnsw
+}
+
+' ML Models (Local)
+package "ML Models (Local)" {
+    component [Sentence-Transformers\nall-mpnet-base-v2] as st #LightGreen
+    component [Cross-Encoder\nms-marco-MiniLM] as ce #LightGreen
+}
+
+' Observability
+package "Observability" {
+    database [Prometheus\n:9000] as prometheus #LightYellow
+    component [Logging\nJSON logs] as logging #LightYellow
+    component [Health Checks] as health #LightYellow
+}
+
+' Storage
+database "File System" as fs #LightGray {
+    folder "/tmp/rag_agent" as temp
+    folder "logs/" as logs_dir
+}
+
+' === Relationships ===
+
+' Client Flow
+client --> api : HTTP REST
+admin --> prometheus : Metrics
+
+' API Internal
+api --> auth : validate
+auth --> limiter : check rate
+limiter --> routes : route request
+
+' Routes to Services
+routes --> parser : /ingest
+routes --> rag : /query
+routes --> health : /health
+
+' RAG Query Flow
+rag --> embed : embed query
+embed --> st : generate vector
+rag --> elastic : vector search
+elastic --> hnsw : ANN search
+rag --> rerank : rerank results
+rerank --> ce : cross-encode
+rag --> llm : generate answer
+llm --> citation : verify sources
+
+' LLM Provider Selection
+llm -down-> openai : if provider=openai
+llm -down-> anthropic : if provider=anthropic
+llm -down-> gemini : if provider=gemini
+
+' Document Ingestion
+parser --> embed : embed chunks
+embed --> elastic : index vectors
+parser --> temp : save files
+
+' Monitoring
+api --> prometheus : metrics
+api --> logging : log events
+logging --> logs_dir : write logs
+
+' Notes
+note right of gemini
+  **Actif par défaut**
+  LLM_PROVIDER=gemini
+  Gratuit: 2M tokens/mois
+end note
+
+note right of st
+  **Embeddings locaux**
+  768 dimensions
+  Pas de coût API
+end note
+
+note right of elastic
+  **Vector Database**
+  Cosine similarity
+  HNSW algorithm
+end note
+
+@enduml

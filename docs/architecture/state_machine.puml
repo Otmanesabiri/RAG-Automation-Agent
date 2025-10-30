@@ -1,0 +1,69 @@
+@startuml RAG_State_Machine
+title Request Lifecycle - State Machine
+skinparam monochrome true
+
+[*] --> Received : Client Request
+
+state Received {
+    [*] --> Authenticating
+    Authenticating --> RateChecking : ✓ Valid API Key
+    Authenticating --> [*] : ✗ Invalid Key\n(401 Unauthorized)
+    RateChecking --> RouteMatching : ✓ Within Limit
+    RateChecking --> [*] : ✗ Rate Exceeded\n(429 Too Many Requests)
+}
+
+state RouteMatching {
+    [*] --> IngestRoute : POST /ingest
+    [*] --> QueryRoute : POST /query
+    [*] --> HealthRoute : GET /health
+    [*] --> MetricsRoute : GET /metrics
+}
+
+state IngestRoute {
+    [*] --> Parsing
+    Parsing --> Splitting : Documents Parsed
+    Splitting --> Embedding : Chunks Created
+    Embedding --> Indexing : Vectors Generated
+    Indexing --> [*] : ✓ Indexed (202)
+    Parsing --> [*] : ✗ Parse Error (400)
+}
+
+state QueryRoute {
+    [*] --> QueryEmbedding
+    QueryEmbedding --> VectorSearch : Query Vector
+    VectorSearch --> Reranking : Top-K Docs
+    Reranking --> ContextPrep : Top-3 Docs
+    ContextPrep --> LLMGeneration : Context Ready
+    LLMGeneration --> CitationCheck : Answer Generated
+    CitationCheck --> [*] : ✓ Valid (200)
+    VectorSearch --> [*] : ✗ No Results (404)
+    LLMGeneration --> [*] : ✗ LLM Error (500)
+}
+
+HealthRoute --> [*] : ✓ Healthy (200)
+MetricsRoute --> [*] : ✓ Metrics (200)
+
+IngestRoute --> ResponseSent
+QueryRoute --> ResponseSent
+HealthRoute --> ResponseSent
+MetricsRoute --> ResponseSent
+
+ResponseSent --> MetricsRecorded
+MetricsRecorded --> LogWritten
+LogWritten --> [*]
+
+note right of QueryRoute
+  Average: 2-5 seconds
+  - Embedding: 100ms
+  - Search: 50ms
+  - Rerank: 200ms
+  - LLM: 2-4s
+end note
+
+note right of IngestRoute
+  Batch processing
+  - 1 doc: ~500ms
+  - 10 docs: ~3-5s
+end note
+
+@enduml

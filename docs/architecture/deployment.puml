@@ -1,0 +1,86 @@
+@startuml RAG_Deployment
+title Deploiement Docker - RAG Agent
+skinparam monochrome true
+
+node "Host Machine (Ubuntu)" {
+    
+    node "Docker Network: rag_network" {
+        
+        node "Container: rag-elasticsearch" {
+            component [Elasticsearch 8.17] as ES
+            database "Volume:\nrag_data" as vol1
+            ES -- vol1
+            note right of ES
+                Port: 9200
+                Memory: 2GB
+                Index: rag_documents
+                HNSW enabled
+            end note
+        }
+        
+        node "Container: rag-api (Flask)" {
+            component [Flask App\n:8000] as Flask
+            component [Gunicorn\nWorkers: 4] as Gunicorn
+            component [Python 3.12] as Python
+            
+            package "Application Code" {
+                [API Routes]
+                [RAG Service]
+                [LLM Service]
+                [Embedding Service]
+            }
+            
+            folder ".env\n(secrets)" as env
+            database "Volume:\nlogs/" as vol2
+            database "Volume:\n/tmp/rag_agent" as vol3
+            
+            Gunicorn --> Flask
+            Flask --> Python
+            Python --> env
+            Flask -- vol2
+            Flask -- vol3
+            
+            note right of Flask
+                Workers: 4
+                Timeout: 120s
+                Rate limit: 60/min
+                Auth: API keys
+            end note
+        }
+        
+        ES <--> Flask : HTTP\n9200
+    }
+    
+    node "Local ML Models" {
+        [Sentence-Transformers\nall-mpnet-base-v2\n~438MB]
+        [Cross-Encoder\nms-marco-MiniLM\n~90MB]
+    }
+    
+    Flask --> [Sentence-Transformers\nall-mpnet-base-v2\n~438MB]
+    Flask --> [Cross-Encoder\nms-marco-MiniLM\n~90MB]
+}
+
+cloud "External APIs" {
+    [OpenAI API\ngpt-4-turbo] as OpenAI
+    [Anthropic API\nclaude-3-5-sonnet] as Anthropic
+    [Google Gemini API\ngemini-2.0-flash] as Gemini
+}
+
+Flask --> Gemini : HTTPS\n(active)
+Flask -[dashed]-> OpenAI : HTTPS\n(optional)
+Flask -[dashed]-> Anthropic : HTTPS\n(optional)
+
+actor "Client\n(Browser/Postman)" as Client
+actor "Prometheus\nServer" as Prom
+
+Client --> Flask : HTTP\nlocalhost:8000
+Prom --> Flask : HTTP\n/metrics
+
+note bottom of Gemini
+    **Default Provider**
+    Free tier: 2M tokens/month
+    Latency: ~2-4s
+    Cost: $0
+end note
+
+@enduml

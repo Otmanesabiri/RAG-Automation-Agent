@@ -1,0 +1,81 @@
+@startuml RAG_Ingestion_Sequence
+title Document Ingestion Flow
+skinparam monochrome true
+
+actor Client
+participant "API Gateway" as API
+participant "Document\nParser" as Parser
+participant "Text Splitter" as Splitter
+participant "Embedding\nService" as Embed
+participant "Sentence\nTransformers" as ST
+database "Elasticsearch" as ES
+database "File System\n/tmp/rag_agent" as FS
+
+Client -> API: POST /ingest\n{"documents": [...]}
+activate API
+
+== File Processing ==
+API -> Parser: parse_documents()
+activate Parser
+
+loop for each document
+    Parser -> FS: save_file(content)
+    activate FS
+    FS --> Parser: file_path
+    deactivate FS
+    
+    alt PDF
+        Parser -> Parser: extract_pdf()
+    else DOCX
+        Parser -> Parser: extract_docx()
+    else HTML
+        Parser -> Parser: extract_html()
+    else TXT
+        Parser -> Parser: read_text()
+    end
+    
+    Parser -> Splitter: split_text(\nchunk_size=512,\noverlap=50)
+    activate Splitter
+    Splitter --> Parser: [chunk1, chunk2, ...]
+    deactivate Splitter
+end
+
+Parser --> API: parsed_documents
+deactivate Parser
+
+== Embedding & Indexing ==
+API -> Embed: batch_embed(chunks)
+activate Embed
+
+loop for each chunk
+    Embed -> ST: encode(chunk)
+    activate ST
+    ST --> Embed: [768D vector]
+    deactivate ST
+end
+
+Embed --> API: embeddings
+deactivate Embed
+
+== Elasticsearch Indexing ==
+API -> ES: bulk_index(\ndocuments + embeddings)
+activate ES
+
+loop for each document
+    ES -> ES: index document {\n  content: "...",\n  embedding: [768D],\n  metadata: {...}\n}
+end
+
+ES --> API: indexed_ids
+deactivate ES
+
+API --> Client: 202 Accepted\n{\n  "status": "indexed",\n  "documents": [\n    {"indexed_ids": [...]}\n  ]\n}
+deactivate API
+
+note over Client
+  Batch processing:
+  - 1 doc = ~500ms
+  - 10 docs = ~3-5s
+  - Parallel embedding
+end note
+
+@enduml

@@ -76,8 +76,24 @@ class ElasticsearchVectorStore:
         query: str,
         k: int = 4,
         filters: Optional[Dict[str, Any]] = None,
+        min_score: Optional[float] = None,
+        max_age_days: Optional[int] = None,
+        user_permissions: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """Perform kNN vector similarity search."""
+        """
+        Perform kNN vector similarity search with advanced filtering.
+        
+        Args:
+            query: Search query text
+            k: Number of results to return
+            filters: Custom metadata filters (e.g., {"category": "education"})
+            min_score: Minimum similarity score threshold (0-1)
+            max_age_days: Maximum age of documents in days
+            user_permissions: List of permission levels user has access to
+        
+        Returns:
+            List of matching documents with scores
+        """
         query_embedding = self.embedding_service.embed_query(query)
 
         knn_query = {
@@ -87,13 +103,24 @@ class ElasticsearchVectorStore:
             "num_candidates": k * 10,
         }
 
-        if filters:
-            knn_query["filter"] = self._build_filter(filters)
+        # Build combined filters
+        combined_filters = self._build_advanced_filters(
+            filters=filters,
+            max_age_days=max_age_days,
+            user_permissions=user_permissions
+        )
+        
+        if combined_filters:
+            knn_query["filter"] = combined_filters
 
         search_body = {
             "knn": knn_query,
             "_source": ["id", "content", "metadata", "source", "created_at"],
         }
+        
+        # Add minimum score if specified
+        if min_score is not None:
+            search_body["min_score"] = min_score
 
         response = self.client.search(index=self.index_name, body=search_body)
         results = []
@@ -105,6 +132,7 @@ class ElasticsearchVectorStore:
                     "metadata": hit["_source"]["metadata"],
                     "source": hit["_source"]["source"],
                     "score": hit["_score"],
+                    "created_at": hit["_source"].get("created_at"),
                 }
             )
         return results
@@ -115,6 +143,68 @@ class ElasticsearchVectorStore:
         for key, value in filters.items():
             must_clauses.append({"term": {f"metadata.{key}": value}})
         return {"bool": {"must": must_clauses}} if must_clauses else {}
+    
+    def _build_advanced_filters(
+        self,
+        filters: Optional[Dict[str, Any]] = None,
+        max_age_days: Optional[int] = None,
+        user_permissions: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Build advanced Elasticsearch filters.
+        
+        Args:
+            filters: Custom metadata filters
+            max_age_days: Maximum document age in days
+            user_permissions: List of access levels user has
+        
+        Returns:
+            Elasticsearch query DSL filter or None
+        """
+        must_clauses = []
+        
+        # Add custom metadata filters
+        if filters:
+            for key, value in filters.items():
+                if isinstance(value, list):
+                    # Multiple values = OR condition
+                    must_clauses.append({"terms": {f"metadata.{key}": value}})
+                else:
+                    # Single value = exact match
+                    must_clauses.append({"term": {f"metadata.{key}": value}})
+        
+        # Add age filter (documents newer than max_age_days)
+        if max_age_days is not None:
+            from datetime import datetime, timedelta
+            cutoff_date = (datetime.utcnow() - timedelta(days=max_age_days)).isoformat()
+            must_clauses.append({
+                "range": {
+                    "created_at": {
+                        "gte": cutoff_date
+                    }
+                }
+            })
+        
+        # Add permission filter (user can only see docs with their access levels)
+        if user_permissions is not None:
+            # If metadata.access_level exists, it must be in user_permissions
+            # If metadata.access_level doesn't exist, document is public (accessible to all)
+            must_clauses.append({
+                "bool": {
+                    "should": [
+                        # Document has no access_level = public
+                        {"bool": {"must_not": {"exists": {"field": "metadata.access_level"}}}},
+                        # Document access_level matches user permissions
+                        {"terms": {"metadata.access_level": user_permissions}}
+                    ],
+                    "minimum_should_match": 1
+                }
+            })
+        
+        # Return combined filter
+        if must_clauses:
+            return {"bool": {"must": must_clauses}}
+        return None
 
     def health_check(self) -> Dict[str, Any]:
         """Check Elasticsearch cluster health."""

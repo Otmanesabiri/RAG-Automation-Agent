@@ -119,7 +119,7 @@ class EmbeddingService:
 
     def _default_provider(self) -> EmbeddingProvider:
         """Select provider based on environment configuration."""
-        provider_name = os.getenv("EMBEDDING_PROVIDER", "openai").lower()
+        provider_name = os.getenv("EMBEDDING_PROVIDER", "sentence-transformers").lower()
         if provider_name == "openai":
             model = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
             return OpenAIEmbeddingProvider(model=model)

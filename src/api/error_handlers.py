@@ -8,6 +8,7 @@ from werkzeug.exceptions import HTTPException
 from ..ingestion.loaders import UnsupportedDocumentTypeError
 from ..observability import get_logger
 from ..ingestion.url_fetcher import UnsafeURLError
+from ..llm.service import LLMRefusalError
 from .schemas import ErrorResponse
 
 
@@ -33,6 +34,11 @@ def register_error_handlers(app) -> None:
     def handle_unsupported_document(error: UnsupportedDocumentTypeError):
         response = ErrorResponse(code="unsupported_document_type", message=str(error))
         return jsonify({"error": response.model_dump()}), 415
+
+    @app.errorhandler(LLMRefusalError)
+    def handle_refusal(error: LLMRefusalError):
+        response = ErrorResponse(code="llm_refusal", message=str(error))
+        return jsonify({"error": response.model_dump()}), 422
 
     @app.errorhandler(422)
     def handle_unprocessable(error):  # pragma: no cover - handled similarly to HTTPException

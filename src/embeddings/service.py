@@ -8,7 +8,7 @@ from typing import List, Optional
 
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from ..observability.metrics import record_embedding_usage
+from ..observability.metrics import record_embedding_usage, stage_timer
 
 
 class EmbeddingProvider(ABC):
@@ -111,12 +111,14 @@ class EmbeddingService:
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         if not texts:
             return []
-        embeddings = self.provider.embed_documents(texts)
+        with stage_timer("embedding"):
+            embeddings = self.provider.embed_documents(texts)
         record_embedding_usage(texts)
         return embeddings
 
     def embed_query(self, text: str) -> List[float]:
-        embedding = self.provider.embed_query(text)
+        with stage_timer("embedding"):
+            embedding = self.provider.embed_query(text)
         record_embedding_usage([text])
         return embedding
 

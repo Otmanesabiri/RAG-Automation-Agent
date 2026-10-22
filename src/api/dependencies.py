@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from typing import Any
+from typing import Any, Dict
 
 from flask import Flask, current_app
 
 from ..agent import AgentRunner, build_document_tools
+from ..connectors import JobManager, SourceConnector, SyncService, SyncStateStore, load_connectors
 from ..embeddings.service import EmbeddingService
 from ..ingestion.config import ChunkingConfig, LoaderConfig
 from ..ingestion.pipeline import IngestionPipeline
 from ..llm.rag_service import RAGService
 from ..llm.service import LLMService
+from ..redis_client import get_redis_client
 from ..vector_store.elasticsearch_store import ElasticsearchVectorStore
 from .state import RedisSessionStore, SessionStore, build_session_store
 
@@ -91,6 +93,33 @@ def _build_rag_service() -> RAGService:
 def get_llm_service() -> LLMService:
     factory = current_app.extensions.get("llm_service_factory", _build_llm_service)
     return factory()
+
+
+def get_connectors() -> Dict[str, SourceConnector]:
+    factory = current_app.extensions.get("connectors_factory", _build_connectors)
+    return factory()
+
+
+@lru_cache(maxsize=1)
+def _build_connectors() -> Dict[str, SourceConnector]:
+    return load_connectors()
+
+
+def get_sync_service() -> SyncService:
+    factory = current_app.extensions.get("sync_service_factory", _build_sync_service)
+    return factory()
+
+
+@lru_cache(maxsize=1)
+def _build_sync_service() -> SyncService:
+    return SyncService(_build_pipeline(), _build_vector_store(), SyncStateStore(get_redis_client()))
+
+
+def get_job_manager() -> JobManager:
+    manager = current_app.extensions.get("job_manager")
+    if manager is None:
+        manager = current_app.extensions["job_manager"] = JobManager(get_redis_client())
+    return manager
 
 
 def get_agent_runner() -> AgentRunner:

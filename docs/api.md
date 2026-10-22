@@ -84,6 +84,15 @@ REST endpoints of the Flask interface. Every endpoint except `/health` and `/met
   ```
   `stopped_reason` is `answered`, `max_iterations` or `max_tokens`.
 
+### Connectors and background jobs
+Sources are declared server-side in the JSON file at `CONNECTORS_CONFIG` (types `local`, `s3`, `confluence`; see `configs/connectors.example.json`). The API never accepts paths or URLs for them.
+- `GET /connectors`: configured connectors.
+- `POST /connectors/{name}/sync` (body `{"full": false}` optional): starts an incremental sync (new and changed documents indexed, removed ones deleted) and returns `202 {"job_id"}`.
+- `POST /ingest?async=true`: same payload as `/ingest`, processed in the background; returns `202 {"job_id"}`.
+- `GET /jobs/{job_id}`: `status` (`queued`, `running`, `succeeded`, `failed`), `progress`, `result` or `error`. Jobs are visible only to the API key that started them.
+
+For scheduled syncs, run `python scripts/sync_sources.py [name...]` from cron or a Kubernetes CronJob.
+
 ### `GET /documents?size=20&after=<document_id>`
 - **Purpose**: List indexed source documents (one entry per document).
 - **Response**: `{"documents": [{"document_id", "source", "mime_type", "chunks", "indexed_at"}], "next": "<cursor or null>"}`

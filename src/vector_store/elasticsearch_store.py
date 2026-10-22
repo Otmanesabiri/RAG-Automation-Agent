@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-import uuid
-from datetime import datetime
+import hashlib
+import os
+from collections import defaultdict
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+
+from elasticsearch import Elasticsearch, helpers
 
 from ..embeddings.service import EmbeddingService
 from ..ingestion.types import DocumentLike
@@ -21,10 +25,26 @@ class ElasticsearchVectorStore:
         es_url: Optional[str] = None,
         es_username: Optional[str] = None,
         es_password: Optional[str] = None,
+        *,
+        client: Optional[Elasticsearch] = None,
+        refresh: Optional[str] = None,
     ) -> None:
         self.index_name = index_name
         self.embedding_service = embedding_service
-        self.client = create_es_client(es_url, es_username, es_password)
+        self.client = client or create_es_client(es_url, es_username, es_password)
+        # "wait_for" makes new chunks searchable before the request returns
+        # without forcing an expensive refresh; "false" for bulk backfills.
+        self.refresh = refresh or os.getenv("INDEX_REFRESH", "wait_for")
+
+    @staticmethod
+    def document_id_for(source: str) -> str:
+        """Stable id of a source document: re-ingesting the same source replaces it."""
+        return hashlib.sha256(source.encode("utf-8")).hexdigest()[:32]
+
+    @staticmethod
+    def chunk_id_for(document_id: str, index: int, content: str) -> str:
+        digest = hashlib.sha256(f"{document_id}:{index}:{content}".encode("utf-8")).hexdigest()
+        return digest[:32]
 
     def add_documents(
         self,
@@ -32,7 +52,12 @@ class ElasticsearchVectorStore:
         *,
         embeddings: Optional[List[List[float]]] = None,
     ) -> List[str]:
-        """Index documents with embeddings into Elasticsearch."""
+        """Index chunks with embeddings, replacing earlier versions of the same sources.
+
+        Chunk ids are derived from the source, chunk position and content, so
+        re-ingesting identical content overwrites instead of duplicating, and
+        chunks that no longer exist in the new version are deleted.
+        """
         if not documents:
             return []
 
@@ -40,23 +65,108 @@ class ElasticsearchVectorStore:
             texts = [doc.page_content for doc in documents]
             embeddings = self.embedding_service.embed_documents(texts)
 
-        doc_ids = []
-        for doc, embedding in zip(documents, embeddings):
-            doc_id = str(uuid.uuid4())
-            body = {
-                "id": doc_id,
-                "content": doc.page_content,
-                "metadata": doc.metadata,
-                "embedding": embedding,
-                "created_at": datetime.utcnow().isoformat(),
-                "source": doc.metadata.get("source", "unknown"),
-            }
-            self.client.index(index=self.index_name, id=doc_id, document=body)
-            doc_ids.append(doc_id)
+        now = datetime.now(timezone.utc).isoformat()
+        actions = []
+        ids_by_document: Dict[str, List[str]] = defaultdict(list)
+        for position, (doc, embedding) in enumerate(zip(documents, embeddings)):
+            source = doc.metadata.get("source", "unknown")
+            document_id = self.document_id_for(source)
+            chunk_index = doc.metadata.get("chunk_index", position)
+            chunk_id = self.chunk_id_for(document_id, chunk_index, doc.page_content)
+            ids_by_document[document_id].append(chunk_id)
+            actions.append(
+                {
+                    "_index": self.index_name,
+                    "_id": chunk_id,
+                    "_source": {
+                        "id": chunk_id,
+                        "document_id": document_id,
+                        "content": doc.page_content,
+                        "metadata": doc.metadata,
+                        "embedding": embedding,
+                        "created_at": now,
+                        "source": source,
+                    },
+                }
+            )
 
-        # Refresh index to make documents searchable immediately
-        self.client.indices.refresh(index=self.index_name)
-        return doc_ids
+        helpers.bulk(self.client, actions, refresh=self.refresh)
+        for document_id, chunk_ids in ids_by_document.items():
+            self._delete_stale_chunks(document_id, keep=chunk_ids)
+        return [action["_id"] for action in actions]
+
+    def _delete_stale_chunks(self, document_id: str, keep: List[str]) -> None:
+        self.client.delete_by_query(
+            index=self.index_name,
+            query={"bool": {"filter": [{"term": {"document_id": document_id}}], "must_not": [{"ids": {"values": keep}}]}},
+            refresh=True,
+            conflicts="proceed",
+        )
+
+    def list_documents(self, *, size: int = 20, after: Optional[str] = None) -> Dict[str, Any]:
+        """Page through source documents (one entry per document, not per chunk)."""
+        composite: Dict[str, Any] = {"size": size, "sources": [{"document_id": {"terms": {"field": "document_id"}}}]}
+        if after:
+            composite["after"] = {"document_id": after}
+        response = self.client.search(
+            index=self.index_name,
+            size=0,
+            aggs={
+                "documents": {
+                    "composite": composite,
+                    "aggs": {
+                        "sample": {"top_hits": {"size": 1, "_source": ["source", "created_at", "metadata.mime_type"]}},
+                        "last_indexed": {"max": {"field": "created_at"}},
+                    },
+                }
+            },
+        )
+        agg = response["aggregations"]["documents"]
+        documents = []
+        for bucket in agg["buckets"]:
+            sample = bucket["sample"]["hits"]["hits"][0]["_source"]
+            documents.append(
+                {
+                    "document_id": bucket["key"]["document_id"],
+                    "source": sample.get("source"),
+                    "mime_type": (sample.get("metadata") or {}).get("mime_type"),
+                    "chunks": bucket["doc_count"],
+                    "indexed_at": bucket["last_indexed"].get("value_as_string") or sample.get("created_at"),
+                }
+            )
+        next_after = agg.get("after_key", {}).get("document_id") if len(documents) == size else None
+        return {"documents": documents, "next": next_after}
+
+    def get_document(self, document_id: str) -> Optional[Dict[str, Any]]:
+        """Return a document with its chunks in order, or None if unknown."""
+        response = self.client.search(
+            index=self.index_name,
+            query={"term": {"document_id": document_id}},
+            size=10000,
+            _source=["id", "content", "metadata", "source", "created_at"],
+        )
+        hits = [hit["_source"] for hit in response["hits"]["hits"]]
+        if not hits:
+            return None
+        hits.sort(key=lambda h: (h.get("metadata") or {}).get("chunk_index", 0))
+        return {
+            "document_id": document_id,
+            "source": hits[0].get("source"),
+            "chunks": [
+                {"id": h["id"], "content": h["content"], "chunk_index": (h.get("metadata") or {}).get("chunk_index")}
+                for h in hits
+            ],
+        }
+
+    def delete_document(self, document_id: str) -> int:
+        """Delete every chunk of a document; returns the number of chunks removed."""
+        response = self.client.delete_by_query(
+            index=self.index_name,
+            query={"term": {"document_id": document_id}},
+            refresh=True,
+            conflicts="proceed",
+        )
+        return response.get("deleted", 0)
 
     def similarity_search(
         self,
@@ -102,7 +212,7 @@ class ElasticsearchVectorStore:
 
         search_body = {
             "knn": knn_query,
-            "_source": ["id", "content", "metadata", "source", "created_at"],
+            "_source": ["id", "document_id", "content", "metadata", "source", "created_at"],
         }
         
         # Add minimum score if specified
@@ -115,6 +225,7 @@ class ElasticsearchVectorStore:
             results.append(
                 {
                     "id": hit["_source"]["id"],
+                    "document_id": hit["_source"].get("document_id"),
                     "content": hit["_source"]["content"],
                     "metadata": hit["_source"]["metadata"],
                     "source": hit["_source"]["source"],

@@ -123,7 +123,11 @@ class DocumentLoaderFactory:
         with self._temp_file(filename) as temp_path:
             temp_path.write_bytes(content)
             batch = self.load_from_path(temp_path, metadata=metadata)
-        return batch
+        # Report the client's filename, not the random temp path: the source is
+        # shown in citations and identifies the document for re-ingestion.
+        source = (metadata or {}).get("source") or filename
+        self._merge_metadata(batch.documents, {}, source)
+        return LoadedDocumentBatch(documents=batch.documents, source=source, mime_type=mime_type or batch.mime_type)
 
     # ------------------------------------------------------------------
     # Internal helpers

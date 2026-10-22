@@ -66,6 +66,7 @@ def ingest_documents() -> Response:
 
         created_documents.append(
             {
+                "document_id": vector_store.document_id_for(result.source),
                 "source": result.source,
                 "chunks": len(result.chunks),
                 "indexed_ids": doc_ids,
@@ -74,6 +75,39 @@ def ingest_documents() -> Response:
         )
 
     return jsonify({"status": "indexed", "documents": created_documents}), 202
+
+
+@api_bp.route("/documents", methods=["GET"])
+@require_api_key
+@rate_limit
+def list_documents() -> Response:
+    try:
+        size = min(max(int(request.args.get("size", 20)), 1), 100)
+    except ValueError:
+        size = 20
+    page = get_vector_store().list_documents(size=size, after=request.args.get("after"))
+    return jsonify(page)
+
+
+@api_bp.route("/documents/<document_id>", methods=["GET"])
+@require_api_key
+@rate_limit
+def get_document(document_id: str) -> Response:
+    document = get_vector_store().get_document(document_id)
+    if document is None:
+        return _document_not_found(document_id)
+    return jsonify(document)
+
+
+@api_bp.route("/documents/<document_id>", methods=["DELETE"])
+@require_api_key
+@rate_limit
+def delete_document(document_id: str) -> Response:
+    deleted = get_vector_store().delete_document(document_id)
+    if not deleted:
+        return _document_not_found(document_id)
+    logger.info(f"Deleted document {document_id} ({deleted} chunks)")
+    return jsonify({"document_id": document_id, "deleted_chunks": deleted})
 
 
 @api_bp.route("/query", methods=["POST"])
@@ -154,6 +188,11 @@ def get_session(session_id: str) -> Response:
         messages=session["messages"],
     )
     return jsonify(response.model_dump())
+
+
+def _document_not_found(document_id: str):
+    error = ErrorResponse(code="not_found", message="Document not found", details=[{"document_id": document_id}])
+    return jsonify({"error": error.model_dump()}), 404
 
 
 def _session_not_found(session_id: str):

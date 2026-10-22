@@ -19,6 +19,7 @@
   "mappings": {
     "properties": {
       "id": { "type": "keyword" },
+      "document_id": { "type": "keyword" },
       "content": {
         "type": "text",
         "analyzer": "rebuilt_standard"

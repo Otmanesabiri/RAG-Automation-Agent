@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.vector_store import elasticsearch_store
-from src.vector_store.elasticsearch_store import ElasticsearchVectorStore
+from src.vector_store.elasticsearch_store import ElasticsearchVectorStore, IndexDimensionMismatchError
 
 
 class _Embeddings:
@@ -120,3 +120,51 @@ def test_document_endpoints(client, auth_headers):
 def test_document_endpoints_require_auth(client):
     assert client.get("/documents").status_code == 401
     assert client.delete("/documents/x").status_code == 401
+
+class _DimEmbeddings(_Embeddings):
+    def __init__(self, dims, name="model-x"):
+        self.dimension = dims
+        self.model_name = name
+
+
+def test_ensure_index_creates_index_sized_for_model():
+    client = MagicMock()
+    client.indices.exists.return_value = False
+    store = ElasticsearchVectorStore("idx", _DimEmbeddings(3072, "text-embedding-3-large"), client=client)
+
+    assert store.ensure_index() is True
+    body = client.indices.create.call_args.kwargs
+    assert body["mappings"]["properties"]["embedding"]["dims"] == 3072
+    assert body["mappings"]["properties"]["document_id"] == {"type": "keyword"}
+    assert body["mappings"]["_meta"]["embedding_model"] == "text-embedding-3-large"
+
+
+def test_ensure_index_accepts_matching_existing_index():
+    client = MagicMock()
+    client.indices.exists.return_value = True
+    client.indices.get_mapping.return_value = {"idx": {"mappings": {"properties": {"embedding": {"dims": 768}}}}}
+    store = ElasticsearchVectorStore("idx", _DimEmbeddings(768), client=client)
+    assert store.ensure_index() is False
+    client.indices.create.assert_not_called()
+
+
+def test_ensure_index_rejects_dimension_mismatch():
+    client = MagicMock()
+    client.indices.exists.return_value = True
+    client.indices.get_mapping.return_value = {"idx": {"mappings": {"properties": {"embedding": {"dims": 768}}}}}
+    store = ElasticsearchVectorStore("idx", _DimEmbeddings(3072), client=client)
+    with pytest.raises(IndexDimensionMismatchError):
+        store.ensure_index()
+
+
+def test_health_reports_degraded_when_elasticsearch_fails(client, fakes):
+    fakes["vector_store"].health_check = lambda: (_ for _ in ()).throw(ConnectionError("down"))
+    response = client.get("/health")
+    assert response.status_code == 503
+    assert response.get_json()["status"] == "degraded"
+
+
+def test_health_ok(client):
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "ok"

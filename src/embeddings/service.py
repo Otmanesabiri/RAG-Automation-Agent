@@ -44,6 +44,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
             ) from exc
 
         self.model = model
+        self.model_name = model
         self.batch_size = batch_size
         self.client = OpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"))
         self._dimension = 3072 if "large" in model else 1536
@@ -83,6 +84,7 @@ class SentenceTransformerProvider(EmbeddingProvider):
                 "Install with: pip install sentence-transformers"
             ) from exc
 
+        self.model_name = model_name
         self.model = SentenceTransformer(model_name, device=device)
         self._dimension = self.model.get_sentence_embedding_dimension()
 
@@ -116,6 +118,10 @@ class EmbeddingService:
     @property
     def dimension(self) -> int:
         return self.provider.dimension
+
+    @property
+    def model_name(self) -> str:
+        return getattr(self.provider, "model_name", type(self.provider).__name__)
 
     def _default_provider(self) -> EmbeddingProvider:
         """Select provider based on environment configuration."""

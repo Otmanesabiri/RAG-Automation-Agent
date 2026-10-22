@@ -26,14 +26,18 @@ logger = get_logger(__name__)
 
 @api_bp.route("/health", methods=["GET"])
 def health() -> Response:
-    vector_store = get_vector_store()
-    es_health = vector_store.health_check()
+    try:
+        es_health = get_vector_store().health_check()
+    except Exception as exc:  # e.g. Elasticsearch down or index/model mismatch at startup
+        logger.error(f"Health check failed: {exc}")
+        es_health = {"status": "error"}
+    healthy = es_health.get("status") in {"green", "yellow"}
     status = {
-        "status": "ok",
+        "status": "ok" if healthy else "degraded",
         "version": current_app.config.get("APP_VERSION", "0.1.0"),
         "elasticsearch": es_health.get("status", "unknown"),
     }
-    return jsonify(status)
+    return jsonify(status), 200 if healthy else 503
 
 
 @api_bp.route("/ingest", methods=["POST"])

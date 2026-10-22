@@ -14,9 +14,12 @@ from urllib.parse import urlparse
 
 from langchain_core.documents import Document
 
+from ..observability.logging import get_logger
 from .config import LoaderConfig
 from .types import DocumentLike
 from .url_fetcher import SafeURLFetcher
+
+logger = get_logger(__name__)
 
 
 def _html_to_text(content: bytes) -> str:
@@ -25,6 +28,12 @@ def _html_to_text(content: bytes) -> str:
     soup = BeautifulSoup(content, "html.parser")
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
+    # Keep the heading structure as Markdown so the chunker can split on sections.
+    for level in range(1, 5):
+        for heading in soup.find_all(f"h{level}"):
+            text = heading.get_text(" ", strip=True)
+            if text:
+                heading.string = f"{'#' * level} {text}"
     return soup.get_text(separator="\n", strip=True)
 
 
@@ -93,7 +102,9 @@ class DocumentLoaderFactory:
 
         loader = self._resolve_loader(resolved_path, mime_type)
         documents = loader.load()
-        self._merge_metadata(documents, metadata or {}, str(resolved_path))
+        if mime_type == "application/pdf":
+            documents = self._ocr_empty_pages(resolved_path, documents)
+        self._merge_metadata(documents, {"mime_type": mime_type, **(metadata or {})}, str(resolved_path))
         return LoadedDocumentBatch(documents=documents, source=str(resolved_path), mime_type=mime_type)
 
     def load_from_url(
@@ -122,7 +133,7 @@ class DocumentLoaderFactory:
                 filename += mimetypes.guess_extension(mime_type) or ".txt"
             documents = self.load_from_bytes(content=resource.content, filename=filename).documents
 
-        self._merge_metadata(documents, metadata or {}, url)
+        self._merge_metadata(documents, {"mime_type": mime_type, **(metadata or {})}, url)
         return LoadedDocumentBatch(documents=documents, source=url, mime_type=mime_type)
 
     def load_from_bytes(
@@ -148,6 +159,38 @@ class DocumentLoaderFactory:
 
     # ------------------------------------------------------------------
     # Internal helpers
+    # ------------------------------------------------------------------
+    def _ocr_empty_pages(self, path: Path, documents: List[DocumentLike]) -> List[DocumentLike]:
+        """Recover text of scanned PDF pages (no text layer) with Tesseract OCR.
+
+        Needs the optional extras (pytesseract, pdf2image) plus the tesseract and
+        poppler binaries. Without them, empty pages are flagged ``needs_ocr``.
+        """
+        empty = [doc for doc in documents if not doc.page_content.strip()]
+        if not empty:
+            return documents
+        if not (_module_available("pytesseract") and _module_available("pdf2image")):
+            for doc in empty:
+                doc.metadata["needs_ocr"] = True
+            logger.warning(f"{len(empty)} PDF page(s) without text in {path.name}; install OCR extras to index them")
+            return documents
+
+        import pytesseract
+        from pdf2image import convert_from_path
+
+        languages = os.getenv("OCR_LANGUAGES", "eng+fra")
+        for doc in empty:
+            page = doc.metadata.get("page", 0)
+            try:
+                images = convert_from_path(str(path), first_page=page + 1, last_page=page + 1)
+                doc.page_content = "\n".join(pytesseract.image_to_string(image, lang=languages) for image in images)
+                doc.metadata["ocr"] = True
+            except Exception as exc:  # one unreadable page must not fail the whole document
+                doc.metadata["needs_ocr"] = True
+                logger.warning(f"OCR failed for page {page + 1} of {path.name}: {exc}")
+        return documents
+
+    # ------------------------------------------------------------------
     # ------------------------------------------------------------------
     def _resolve_loader(self, path: Path, mime_type: Optional[str]):
         suffix = path.suffix.lower()

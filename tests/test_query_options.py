@@ -151,3 +151,77 @@ def test_ingest_options_validation(client, auth_headers):
         "options": {"chunk_size": 200, "chunk_overlap": 500},
     }
     assert client.post("/ingest", json=payload, headers=auth_headers).status_code == 422
+
+
+class _RecordingLLM(_LLM):
+    def __init__(self, standalone="What are the drawbacks of solar panels?"):
+        self.prompts = []
+        self.standalone = standalone
+
+    def generate(self, prompt, **kwargs):
+        self.prompts.append(prompt)
+        if "Standalone question:" in prompt:
+            return self.standalone
+        return "answer"
+
+
+class _QueryRecordingStore(_Store):
+    def similarity_search(self, query, k, **kwargs):
+        self.query = query
+        return super().similarity_search(query, k, **kwargs)
+
+
+HISTORY = [
+    {"role": "user", "content": "Tell me about solar panels"},
+    {"role": "assistant", "content": "Solar panels convert sunlight into electricity."},
+]
+
+
+def test_follow_up_is_condensed_for_retrieval_and_history_is_in_prompt():
+    service = _service()
+    service.llm_service = _RecordingLLM()
+    service.vector_store = _QueryRecordingStore()
+
+    result = service.query("and their drawbacks?", top_k=1, rerank=False, history=HISTORY)
+
+    assert service.vector_store.query == "What are the drawbacks of solar panels?"
+    assert result["metadata"]["search_query"] == "What are the drawbacks of solar panels?"
+    final_prompt = service.llm_service.prompts[-1]
+    assert "User: Tell me about solar panels" in final_prompt
+    assert "and their drawbacks?" in final_prompt
+
+
+def test_no_history_means_no_condensation():
+    service = _service()
+    service.llm_service = _RecordingLLM()
+    service.vector_store = _QueryRecordingStore()
+    service.query("standalone question", top_k=1, rerank=False)
+    assert service.vector_store.query == "standalone question"
+    assert len(service.llm_service.prompts) == 1
+
+
+def test_condensation_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("QUERY_CONDENSATION", "false")
+    service = _service()
+    service.llm_service = _RecordingLLM()
+    service.vector_store = _QueryRecordingStore()
+    service.query("and their drawbacks?", top_k=1, rerank=False, history=HISTORY)
+    assert service.vector_store.query == "and their drawbacks?"
+
+
+def test_format_history_respects_limits():
+    from src.llm.rag_service import format_history
+
+    history = [{"role": "user", "content": f"message {i}"} for i in range(10)]
+    text = format_history(history, max_messages=3, max_chars=1000)
+    assert text.splitlines() == ["User: message 7", "User: message 8", "User: message 9"]
+    assert format_history(history, max_messages=3, max_chars=20) == "User: message 9"
+
+
+def test_route_passes_previous_messages(client, auth_headers, fakes):
+    first = client.post("/query", json={"query": "first"}, headers=auth_headers).get_json()
+    session_id = first["metadata"]["session_id"]
+    client.post("/query", json={"query": "second", "session_id": session_id}, headers=auth_headers)
+
+    history = fakes["rag_service"].calls[-1]["history"]
+    assert [m["content"] for m in history] == ["first", "answer to first"]

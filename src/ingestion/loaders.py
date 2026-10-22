@@ -9,9 +9,22 @@ from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
+from urllib.parse import urlparse
+
+from langchain_core.documents import Document
 
 from .config import LoaderConfig
 from .types import DocumentLike
+from .url_fetcher import SafeURLFetcher
+
+
+def _html_to_text(content: bytes) -> str:
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(content, "html.parser")
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+    return soup.get_text(separator="\n", strip=True)
 
 
 class UnsupportedDocumentTypeError(ValueError):
@@ -39,9 +52,10 @@ class DocumentLoaderFactory:
         ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     }
 
-    def __init__(self, config: Optional[LoaderConfig] = None) -> None:
+    def __init__(self, config: Optional[LoaderConfig] = None, url_fetcher: Optional[SafeURLFetcher] = None) -> None:
         self.config = config or LoaderConfig()
         self.config.temp_dir.mkdir(parents=True, exist_ok=True)
+        self.url_fetcher = url_fetcher or SafeURLFetcher()
 
     # ------------------------------------------------------------------
     # Public API
@@ -70,15 +84,27 @@ class DocumentLoaderFactory:
         url: str,
         metadata: Optional[Dict[str, str]] = None,
     ) -> LoadedDocumentBatch:
-        """Load documents from a remote HTTP/HTTPS endpoint."""
+        """Load documents from a remote HTTP/HTTPS endpoint.
 
-        loader_cls = self._load_loader_class("langchain_community.document_loaders", "WebBaseLoader")
-        loader = loader_cls(url)
-        documents = loader.load()
+        The download goes through :class:`SafeURLFetcher`, which rejects internal
+        targets (SSRF). HTML is converted to text; other formats are handed to the
+        regular file loaders.
+        """
 
-        # WebBaseLoader does not expose mime type; rely on metadata hint.
-        mime_type = metadata.get("mime_type") if metadata else None
+        resource = self.url_fetcher.fetch(url)
+        mime_type = (resource.content_type or "").split(";")[0].strip().lower() or None
+        if not mime_type and metadata:
+            mime_type = metadata.get("mime_type")
         self._ensure_allowed_type(mime_type)
+
+        if mime_type in (None, "text/html", "application/xhtml+xml"):
+            documents = [Document(page_content=_html_to_text(resource.content), metadata={})]
+        else:
+            filename = Path(urlparse(resource.url).path).name or "document"
+            if not Path(filename).suffix:
+                filename += mimetypes.guess_extension(mime_type) or ".txt"
+            documents = self.load_from_bytes(content=resource.content, filename=filename).documents
+
         self._merge_metadata(documents, metadata or {}, url)
         return LoadedDocumentBatch(documents=documents, source=url, mime_type=mime_type)
 

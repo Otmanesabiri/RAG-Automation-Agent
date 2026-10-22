@@ -129,6 +129,7 @@ class RAGService:
         prompt_type: Optional[str] = None,
         rerank: Optional[bool] = None,
         history: Optional[List[Dict[str, Any]]] = None,
+        search_mode: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Execute enhanced RAG query with optional re-ranking and citation checking.
@@ -145,6 +146,7 @@ class RAGService:
             include_sources: Include source documents in response
             prompt_type: Override default prompt type (strict, citation, etc.)
             rerank: Force re-ranking on/off for this query (None = service default)
+            search_mode: dense, sparse or hybrid retrieval (None = SEARCH_MODE)
             history: Previous session messages ({role, content}); follow-up
                 questions are rewritten into standalone ones for retrieval
 
@@ -161,6 +163,7 @@ class RAGService:
             max_age_days=max_age_days,
             user_permissions=user_permissions,
             rerank=rerank,
+            search_mode=search_mode,
         )
         active_prompt_type = prompt_type or self.prompt_type
         prompt = self.build_prompt(question, search_results, active_prompt_type, history_text)
@@ -221,6 +224,7 @@ class RAGService:
         prompt_type: Optional[str] = None,
         rerank: Optional[bool] = None,
         history: Optional[List[Dict[str, Any]]] = None,
+        search_mode: Optional[str] = None,
     ) -> Iterator[Dict[str, Any]]:
         """Stream a RAG answer as events: ``sources`` first, then ``token``s, then ``done``."""
         history_text = self._history_text(history)
@@ -232,6 +236,7 @@ class RAGService:
             min_score=min_score,
             max_age_days=max_age_days,
             rerank=rerank,
+            search_mode=search_mode,
         )
         active_prompt_type = prompt_type or self.prompt_type
         prompt = self.build_prompt(question, search_results, active_prompt_type, history_text)
@@ -286,6 +291,7 @@ class RAGService:
         max_age_days: Optional[int] = None,
         user_permissions: Optional[List[str]] = None,
         rerank: Optional[bool] = None,
+        search_mode: Optional[str] = None,
     ) -> tuple[List[Dict[str, Any]], bool]:
         """Search the vector store, re-ranking when enabled. Returns (results, reranked)."""
         use_reranker = self.reranker is not None and (rerank is None or rerank)
@@ -300,6 +306,7 @@ class RAGService:
             min_score=min_score,
             max_age_days=max_age_days,
             user_permissions=user_permissions,
+            mode=search_mode,
         )
 
         if use_reranker and search_results:

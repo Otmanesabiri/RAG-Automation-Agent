@@ -84,3 +84,12 @@ def test_index_search_and_document_lifecycle(store):
 
 def test_ensure_index_is_idempotent(store):
     assert store.ensure_index() is False
+
+
+def test_hybrid_search_finds_exact_terms(store):
+    store.add_documents(_chunks("codes.txt", ["error code XK-4471 means the disk is full", "general maintenance notes"]))
+    store.add_documents(_chunks("other.txt", ["the printer is out of paper"]))
+
+    for mode in ("sparse", "hybrid"):
+        results = store.similarity_search("XK-4471", k=1, mode=mode)
+        assert results[0]["content"].startswith("error code XK-4471"), mode

@@ -41,8 +41,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
             from openai import OpenAI
         except ImportError as exc:
             raise RuntimeError(
-                "openai package is required for OpenAIEmbeddingProvider. "
-                "Install with: pip install openai"
+                "openai package is required for OpenAIEmbeddingProvider. " "Install with: pip install openai"
             ) from exc
 
         self.model = model

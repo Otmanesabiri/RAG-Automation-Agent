@@ -13,11 +13,11 @@ from .types import DocumentLike
 
 class ChunkingService:
     """Apply configurable chunking strategies to LangChain documents."""
- 
+
     def __init__(self, config: Optional[ChunkingConfig] = None, *, enable_heuristics: bool = True) -> None:
         self.config = config or ChunkingConfig()
         self.enable_heuristics = enable_heuristics
- 
+
     def split_documents(
         self,
         documents: Iterable[DocumentLike],
@@ -52,14 +52,14 @@ class ChunkingService:
                 }
             chunks.extend(split_docs)
         return chunks
- 
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
     def _resolve_config(self, document: DocumentLike) -> ChunkingConfig:
         if not self.enable_heuristics:
             return self.config
- 
+
         doc_length = len(document.page_content)
         metadata = document.metadata or {}
         dynamic_config = ChunkingConfig(
@@ -69,7 +69,7 @@ class ChunkingService:
             metadata_fields={**self.config.metadata_fields},
             language=self.config.language or metadata.get("language"),
         )
- 
+
         # Adjust chunk size based on simple heuristics
         page_count = metadata.get("page_count") or metadata.get("num_pages")
         if isinstance(page_count, int) and page_count > 50:
@@ -80,10 +80,10 @@ class ChunkingService:
             dynamic_config.chunk_size = max(dynamic_config.chunk_size - 200, 400)
         elif doc_length > 12000:
             dynamic_config.chunk_size = min(dynamic_config.chunk_size + 200, 1200)
- 
+
         # Ensure overlap scales proportionally (but keeps gap >= 0)
         dynamic_config.chunk_overlap = max(int(dynamic_config.chunk_size * 0.15), 50)
         if dynamic_config.chunk_overlap >= dynamic_config.chunk_size:
             dynamic_config.chunk_overlap = dynamic_config.chunk_size // 4
- 
+
         return dynamic_config

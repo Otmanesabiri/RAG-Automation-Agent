@@ -10,10 +10,10 @@ from flask import Flask
 from flask_cors import CORS
 
 from ..config import cors_origins, is_development, validate_settings
+from ..observability import configure_logging, get_logger, register_metrics
 from .dependencies import register_dependencies
 from .error_handlers import register_error_handlers
 from .routes import api_bp
-from ..observability import configure_logging, get_logger, register_metrics
 
 logger = get_logger(__name__)
 

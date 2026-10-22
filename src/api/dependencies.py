@@ -14,7 +14,6 @@ from ..ingestion.pipeline import IngestionPipeline
 from ..llm.rag_service import RAGService
 from ..llm.service import LLMService
 from ..vector_store.elasticsearch_store import ElasticsearchVectorStore
-
 from .state import RedisSessionStore, SessionStore, build_session_store
 
 

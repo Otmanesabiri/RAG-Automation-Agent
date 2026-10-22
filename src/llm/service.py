@@ -69,8 +69,7 @@ class OpenAILLMProvider(LLMProvider):
             from openai import OpenAI
         except ImportError as exc:
             raise RuntimeError(
-                "openai package is required for OpenAILLMProvider. "
-                "Install with: pip install openai"
+                "openai package is required for OpenAILLMProvider. " "Install with: pip install openai"
             ) from exc
 
         self.model = model or _default_model("openai")
@@ -138,8 +137,7 @@ class AnthropicLLMProvider(LLMProvider):
             from anthropic import Anthropic
         except ImportError as exc:
             raise RuntimeError(
-                "anthropic package is required for AnthropicLLMProvider. "
-                "Install with: pip install anthropic"
+                "anthropic package is required for AnthropicLLMProvider. " "Install with: pip install anthropic"
             ) from exc
 
         self.model = model or _default_model("anthropic")
@@ -199,8 +197,7 @@ class GeminiLLMProvider(LLMProvider):
             from google import genai
         except ImportError as exc:
             raise RuntimeError(
-                "google-genai package is required for GeminiLLMProvider. "
-                "Install with: pip install google-genai"
+                "google-genai package is required for GeminiLLMProvider. " "Install with: pip install google-genai"
             ) from exc
 
         self.model = model or _default_model("gemini")
@@ -287,7 +284,4 @@ class LLMService:
         elif provider_name == "gemini":
             return GeminiLLMProvider()
         else:
-            raise ValueError(
-                f"Unknown LLM provider: {provider_name}. "
-                "Supported providers: openai, anthropic, gemini"
-            )
+            raise ValueError(f"Unknown LLM provider: {provider_name}. " "Supported providers: openai, anthropic, gemini")

@@ -69,6 +69,12 @@ class QueryRequest(BaseModel):
     )
 
 
+class AgentRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=4000)
+    session_id: Optional[str] = None
+    max_iterations: Optional[int] = Field(None, ge=1, le=15)
+
+
 class QueryResponse(BaseModel):
     answer: str
     sources: List[Dict[str, Any]] = Field(default_factory=list)

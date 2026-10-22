@@ -8,6 +8,7 @@ from typing import Any
 
 from flask import Flask, current_app
 
+from ..agent import AgentRunner, build_document_tools
 from ..embeddings.service import EmbeddingService
 from ..ingestion.config import ChunkingConfig, LoaderConfig
 from ..ingestion.pipeline import IngestionPipeline
@@ -25,6 +26,7 @@ def register_dependencies(app: Flask) -> None:
     app.extensions["vector_store_factory"] = _build_vector_store
     app.extensions["llm_service_factory"] = _build_llm_service
     app.extensions["rag_service_factory"] = _build_rag_service
+    app.extensions["agent_runner_factory"] = _build_agent_runner
 
 
 def get_session_store() -> SessionStore | RedisSessionStore:
@@ -89,6 +91,18 @@ def _build_rag_service() -> RAGService:
 def get_llm_service() -> LLMService:
     factory = current_app.extensions.get("llm_service_factory", _build_llm_service)
     return factory()
+
+
+def get_agent_runner() -> AgentRunner:
+    factory = current_app.extensions.get("agent_runner_factory", _build_agent_runner)
+    return factory()
+
+
+@lru_cache(maxsize=1)
+def _build_agent_runner() -> AgentRunner:
+    llm_service = _build_llm_service()
+    registry = build_document_tools(_build_rag_service(), _build_vector_store(), llm_service)
+    return AgentRunner(llm_service, registry)
 
 
 def get_rag_service() -> RAGService:

@@ -1,0 +1,3 @@
+# Optional: lets the loader fall back to Unstructured for formats other than
+# PDF, DOCX, TXT, Markdown and HTML. Large dependency tree; not in the Docker image.
+unstructured>=0.15.7

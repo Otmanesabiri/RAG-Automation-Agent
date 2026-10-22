@@ -71,3 +71,18 @@ def test_pipeline_chunks_with_metadata(loader_config):
 def test_chunking_config_validation():
     with pytest.raises(ValueError):
         ChunkingConfig(chunk_size=100, chunk_overlap=100)
+
+
+def test_html_file_is_loaded_without_unstructured(loader_config):
+    batch = DocumentLoaderFactory(loader_config).load_from_bytes(
+        content=b"<html><body><p>Hello</p><script>x()</script></body></html>", filename="page.html"
+    )
+    assert batch.documents[0].page_content == "Hello"
+
+
+def test_unknown_format_without_unstructured_is_unsupported(loader_config, monkeypatch):
+    from src.ingestion import loaders
+
+    monkeypatch.setattr(loaders, "_module_available", lambda name: False)
+    with pytest.raises(UnsupportedDocumentTypeError):
+        DocumentLoaderFactory(loader_config).load_from_bytes(content=b"x", filename="data.xyz")

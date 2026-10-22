@@ -28,6 +28,22 @@ def _html_to_text(content: bytes) -> str:
     return soup.get_text(separator="\n", strip=True)
 
 
+class _HTMLLoader:
+    """Minimal HTML loader (scripts and styles stripped) with the LangChain ``load()`` API."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def load(self) -> List[Document]:
+        return [Document(page_content=_html_to_text(self.path.read_bytes()), metadata={})]
+
+
+def _module_available(name: str) -> bool:
+    from importlib.util import find_spec
+
+    return find_spec(name) is not None
+
+
 class UnsupportedDocumentTypeError(ValueError):
     """Raised when the loader factory cannot handle the document type."""
 
@@ -146,10 +162,10 @@ class DocumentLoaderFactory:
             loader_cls = self._load_loader_class(loaders_module, "TextLoader")
             return loader_cls(path, autodetect_encoding=True)
         if suffix in {".html", ".htm"}:
-            loader_cls = self._load_loader_class(loaders_module, "UnstructuredHTMLLoader")
-            return loader_cls(str(path))
+            return _HTMLLoader(path)
 
-        if self.config.use_unstructured:
+        # Optional extra (pip install -r requirements-extras.txt): handles exotic formats.
+        if self.config.use_unstructured and _module_available("unstructured"):
             loader_cls = self._load_loader_class(loaders_module, "UnstructuredFileLoader")
             return loader_cls(str(path))
 

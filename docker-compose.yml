@@ -30,8 +30,26 @@ services:
     networks:
       - rag-network
 
+  redis:
+    image: redis:7.4-alpine
+    container_name: rag-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rag-network
+
 volumes:
   es-data:
+    driver: local
+  redis-data:
     driver: local
 
 networks:

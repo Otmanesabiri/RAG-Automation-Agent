@@ -15,11 +15,11 @@ from ..llm.rag_service import RAGService
 from ..llm.service import LLMService
 from ..vector_store.elasticsearch_store import ElasticsearchVectorStore
 
-from .state import SessionStore
+from .state import RedisSessionStore, SessionStore, build_session_store
 
 
 def register_dependencies(app: Flask) -> None:
-    app.extensions["session_store"] = SessionStore()
+    app.extensions["session_store"] = build_session_store()
     # Lazily initialize ingestion pipeline to avoid heavy imports during app startup.
     app.extensions["ingestion_pipeline_factory"] = _build_pipeline
     app.extensions["embedding_service_factory"] = _build_embedding_service
@@ -28,10 +28,10 @@ def register_dependencies(app: Flask) -> None:
     app.extensions["rag_service_factory"] = _build_rag_service
 
 
-def get_session_store() -> SessionStore:
+def get_session_store() -> SessionStore | RedisSessionStore:
     store = current_app.extensions.get("session_store")
     if not store:
-        store = SessionStore()
+        store = build_session_store()
         current_app.extensions["session_store"] = store
     return store
 

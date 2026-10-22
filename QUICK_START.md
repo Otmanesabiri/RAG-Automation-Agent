@@ -91,7 +91,7 @@ Une fois l'application lancée, **ouvrez un nouveau terminal** et lancez :
 
 ```bash
 cd "/home/red/Documents/GLSID3/preparation stage/AI_Agent"
-./test_api.sh
+./scripts/manual/smoke_test_api.sh
 ```
 
 Cela va tester :
@@ -223,7 +223,7 @@ pip install -r requirements.txt
 - [ ] Docker est démarré (`sudo systemctl start docker`)
 - [ ] Clé API OpenAI configurée dans `.env`
 - [ ] Lancé `./start.sh` avec succès
-- [ ] Testé avec `./test_api.sh`
+- [ ] Testé avec `./scripts/manual/smoke_test_api.sh`
 - [ ] Accédé à http://localhost:8000/health
 
 **Une fois tous les points cochés, vous êtes prêt ! 🎉**

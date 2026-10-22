@@ -451,7 +451,7 @@ response = rag_service.query(
 
 Exécuter les tests :
 ```bash
-python test_rag_enhancements.py
+python scripts/manual/demo_rag_enhancements.py
 ```
 
 Tests inclus :

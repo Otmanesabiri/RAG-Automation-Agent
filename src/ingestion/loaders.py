@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import mimetypes
+import os
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -200,6 +201,7 @@ class DocumentLoaderFactory:
                     dir=self.factory.config.temp_dir,
                     prefix="uploaded-",
                 )
+                os.close(fd)  # only the path is used; an open handle leaks and blocks deletion on Windows
                 Path(raw_path).chmod(0o600)
                 self.path = Path(raw_path)
                 return self.path

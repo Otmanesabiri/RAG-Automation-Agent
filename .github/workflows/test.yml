@@ -42,7 +42,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-cov pytest-mock pytest-asyncio httpx
+        pip install pytest pytest-cov fakeredis
 
     - name: Wait for Elasticsearch
       run: |
@@ -55,35 +55,26 @@ jobs:
           sleep 2
         done
 
-    - name: Create test environment file
+    # Unit tests use in-memory fakes (see tests/conftest.py) and need no services.
+    - name: Run unit tests with coverage
       run: |
-        cat > .env.test << EOF
-        OPENAI_API_KEY=test-key-fake
-        ANTHROPIC_API_KEY=test-key-fake
-        ELASTICSEARCH_URL=http://localhost:9200
-        ELASTICSEARCH_USERNAME=
-        ELASTICSEARCH_PASSWORD=
-        ELASTICSEARCH_INDEX=test_rag_documents
-        FLASK_ENV=testing
-        SECRET_KEY=test-secret-key-12345
-        LOG_LEVEL=DEBUG
-        LOG_FILE=logs/test.log
-        AUTH_ENABLED=false
-        API_KEYS=test-key-123
-        RATE_LIMIT_RPM=1000
-        PROMETHEUS_PORT=9000
-        EOF
-
-    - name: Run tests with coverage
-      env:
-        PYTHONPATH: ${{ github.workspace }}
-      run: |
-        pytest tests/ \
+        pytest \
           --cov=src \
+          --cov-fail-under=75 \
+          --junitxml=test-results.xml \
+          -v \
+          --tb=short
+
+    - name: Run integration tests (Elasticsearch)
+      env:
+        ELASTICSEARCH_URL: http://localhost:9200
+      run: |
+        pytest -m integration \
+          --cov=src \
+          --cov-append \
           --cov-report=xml \
           --cov-report=html \
           --cov-report=term-missing \
-          --junitxml=test-results.xml \
           -v \
           --tb=short
 

@@ -6,6 +6,8 @@ import logging
 import os
 from typing import Any, Dict, Iterator, List, Optional
 
+from ..observability.metrics import record_citation_check
+from ..retrieval.llm_judge import LLMCitationVerifier
 from ..vector_store.elasticsearch_store import ElasticsearchVectorStore, reciprocal_rank_fusion
 from .prompts import PromptBuilder, StrictRAGPrompt
 from .service import LLMService
@@ -52,6 +54,7 @@ Standalone question:"""
 
 
 QUERY_EXPANSIONS = {"none", "multi_query", "hyde"}
+CITATION_CHECK_MODES = {"off", "lexical", "llm"}
 
 MULTI_QUERY_TEMPLATE = """Write {count} different search queries that could retrieve documents answering the question below. Vary the wording and use synonyms. Keep the language of the question. One query per line, no numbering, no other text.
 
@@ -106,6 +109,7 @@ class RAGService:
         enable_reranking: bool = True,
         enable_citation_check: bool = False,
         rerank_top_k: int = 10,
+        citation_check_mode: Optional[str] = None,
     ) -> None:
         self.vector_store = vector_store
         self.llm_service = llm_service
@@ -122,10 +126,13 @@ class RAGService:
             except Exception as e:
                 logger.warning(f"Failed to initialize reranker: {e}")
 
-        self.citation_verifier = None
-        if enable_citation_check and CITATION_VERIFIER_AVAILABLE:
-            self.citation_verifier = CitationVerifier()
-            logger.info("Citation verification enabled")
+        # off | lexical (fuzzy text matching) | llm (LLM judge, one extra call per answer)
+        default_mode = "lexical" if enable_citation_check else os.getenv("CITATION_CHECK", "off")
+        self.citation_check_mode = (citation_check_mode or default_mode).lower()
+        if self.citation_check_mode not in CITATION_CHECK_MODES:
+            raise ValueError(f"Unknown citation check mode: {self.citation_check_mode}")
+        if self.citation_check_mode != "off":
+            logger.info(f"Citation verification enabled ({self.citation_check_mode})")
 
     def query(
         self,
@@ -144,6 +151,7 @@ class RAGService:
         history: Optional[List[Dict[str, Any]]] = None,
         search_mode: Optional[str] = None,
         query_expansion: Optional[str] = None,
+        verify_citations: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Execute enhanced RAG query with optional re-ranking and citation checking.
@@ -162,6 +170,7 @@ class RAGService:
             rerank: Force re-ranking on/off for this query (None = service default)
             search_mode: dense, sparse or hybrid retrieval (None = SEARCH_MODE)
             query_expansion: none, multi_query or hyde (None = QUERY_EXPANSION)
+            verify_citations: off, lexical or llm (None = CITATION_CHECK)
             history: Previous session messages ({role, content}); follow-up
                 questions are rewritten into standalone ones for retrieval
 
@@ -204,19 +213,9 @@ class RAGService:
             },
         }
 
-        # Add citation verification if enabled
-        if self.citation_verifier and search_results:
-            try:
-                citation_check = self.citation_verifier.verify(answer=answer, sources=search_results, check_claims=True)
-                response["citation_check"] = {
-                    "is_grounded": citation_check.is_grounded,
-                    "confidence": citation_check.confidence,
-                    "warnings": citation_check.warnings,
-                }
-                if not citation_check.is_grounded:
-                    logger.warning(f"Low citation confidence: {citation_check.confidence:.2%}")
-            except Exception as e:
-                logger.error(f"Citation verification failed: {e}")
+        citation_check = self.check_citations(answer, search_results, verify_citations)
+        if citation_check:
+            response["citation_check"] = citation_check
 
         if include_sources:
             response["sources"] = self.format_sources(search_results)
@@ -238,6 +237,7 @@ class RAGService:
         history: Optional[List[Dict[str, Any]]] = None,
         search_mode: Optional[str] = None,
         query_expansion: Optional[str] = None,
+        verify_citations: Optional[str] = None,
     ) -> Iterator[Dict[str, Any]]:
         """Stream a RAG answer as events: ``sources`` first, then ``token``s, then ``done``."""
         history_text = self._history_text(history)
@@ -262,24 +262,56 @@ class RAGService:
             parts.append(text)
             yield {"event": "token", "data": text}
 
-        yield {
-            "event": "done",
-            "data": {
-                "answer": "".join(parts),
-                "metadata": {
-                    "top_k": top_k,
-                    "retrieved_docs": len(search_results),
-                    "reranking_enabled": reranked,
-                    "prompt_type": active_prompt_type,
-                    "search_query": search_query,
-                    "expanded_queries": extra_queries,
-                },
+        answer = "".join(parts)
+        done: Dict[str, Any] = {
+            "answer": answer,
+            "metadata": {
+                "top_k": top_k,
+                "retrieved_docs": len(search_results),
+                "reranking_enabled": reranked,
+                "prompt_type": active_prompt_type,
+                "search_query": search_query,
+                "expanded_queries": extra_queries,
             },
         }
+        citation_check = self.check_citations(answer, search_results, verify_citations)
+        if citation_check:
+            done["citation_check"] = citation_check
+        yield {"event": "done", "data": done}
 
     def _history_text(self, history: Optional[List[Dict[str, Any]]]) -> str:
         max_messages, max_chars, _ = _history_settings()
         return format_history(history, max_messages, max_chars)
+
+    def check_citations(
+        self, answer: str, search_results: List[Dict[str, Any]], mode: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Grade how well the answer is grounded in the sources; None when disabled or failed."""
+        mode = (mode or getattr(self, "citation_check_mode", "off")).lower()
+        if mode == "off" or not search_results:
+            return None
+        if mode == "llm":
+            verifier = LLMCitationVerifier(self.llm_service)
+        elif mode == "lexical" and CITATION_VERIFIER_AVAILABLE:
+            verifier = CitationVerifier()
+        else:
+            raise ValueError(f"Unknown citation check mode: {mode}")
+        try:
+            check = verifier.verify(answer=answer, sources=search_results, check_claims=True)
+        except Exception as e:
+            logger.error(f"Citation verification ({mode}) failed: {e}")
+            return None
+
+        record_citation_check(check.confidence, check.is_grounded, mode)
+        if not check.is_grounded:
+            logger.warning(f"Low citation confidence: {check.confidence:.2%}")
+        return {
+            "mode": mode,
+            "is_grounded": check.is_grounded,
+            "confidence": check.confidence,
+            "ungrounded_claims": check.ungrounded_claims,
+            "warnings": check.warnings,
+        }
 
     def expand_query(self, question: str, strategy: Optional[str]) -> List[str]:
         """Extra search queries for ``multi_query`` (reformulations) or ``hyde``

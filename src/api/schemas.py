@@ -64,12 +64,16 @@ class QueryRequest(BaseModel):
     query_expansion: Optional[Literal["none", "multi_query", "hyde"]] = Field(
         None, description="Extra LLM-generated search queries; null uses QUERY_EXPANSION."
     )
+    verify_citations: Optional[Literal["off", "lexical", "llm"]] = Field(
+        None, description="Grade the answer against its sources; null uses CITATION_CHECK."
+    )
 
 
 class QueryResponse(BaseModel):
     answer: str
     sources: List[Dict[str, Any]] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    citation_check: Optional[Dict[str, Any]] = None
 
 
 class SessionCreateRequest(BaseModel):

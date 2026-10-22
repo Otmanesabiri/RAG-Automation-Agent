@@ -37,6 +37,24 @@ groups:
           description: "Error rate is {{ $value | humanizePercentage }} (threshold: 1%)"
 
       # ===========================
+      # Answer Quality Alerts
+      # ===========================
+      - alert: LowCitationConfidence
+        expr: |
+          (
+            sum(rate(rag_agent_citation_confidence_sum[15m]))
+            /
+            sum(rate(rag_agent_citation_confidence_count[15m]))
+          ) < 0.7
+        for: 15m
+        labels:
+          severity: warning
+          component: rag
+        annotations:
+          summary: "Answers are poorly grounded in their sources"
+          description: "Average citation confidence is {{ $value | humanizePercentage }} (threshold: 70%)"
+
+      # ===========================
       # Latency Alerts
       # ===========================
       - alert: HighLatencyP95

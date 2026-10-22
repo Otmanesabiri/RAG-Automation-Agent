@@ -161,6 +161,7 @@ def query_documents() -> Response:
         "rerank": payload.rerank,
         "search_mode": payload.search_mode,
         "query_expansion": payload.query_expansion,
+        "verify_citations": payload.verify_citations,
         "history": history,
     }
 
@@ -179,6 +180,7 @@ def query_documents() -> Response:
             **rag_response.get("metadata", {}),
             "session_id": session_id,
         },
+        citation_check=rag_response.get("citation_check"),
     )
     session_store.append_message(session_id, "assistant", response.answer)
     return jsonify(response.model_dump())

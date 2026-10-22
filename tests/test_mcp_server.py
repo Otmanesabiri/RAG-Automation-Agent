@@ -5,7 +5,9 @@ import json
 
 import pytest
 
-from src.mcp_server.server import RAGApiClient, create_server
+pytest.importorskip("mcp")
+
+from src.mcp_server.server import RAGApiClient, create_server  # noqa: E402
 
 
 class _FakeApi:

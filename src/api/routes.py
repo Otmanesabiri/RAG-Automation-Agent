@@ -139,10 +139,13 @@ def query_documents() -> Response:
     rag_service = get_rag_service()
     owner = current_client_id()
 
+    history = []
     if payload.session_id:
-        if not session_store.get_session(payload.session_id, owner=owner):
+        session = session_store.get_session(payload.session_id, owner=owner)
+        if not session:
             return _session_not_found(payload.session_id)
         session_id = payload.session_id
+        history = list(session["messages"])
     else:
         session_id = session_store.create_session(user_id=None, owner=owner)
     session_store.append_message(session_id, "user", payload.query)
@@ -156,6 +159,7 @@ def query_documents() -> Response:
         "max_age_days": payload.max_age_days,
         "prompt_type": payload.prompt_type,
         "rerank": payload.rerank,
+        "history": history,
     }
 
     if payload.stream:

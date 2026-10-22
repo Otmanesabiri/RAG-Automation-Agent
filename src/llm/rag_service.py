@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Dict, Iterator, List, Optional
 
 from ..vector_store.elasticsearch_store import ElasticsearchVectorStore
@@ -36,6 +37,40 @@ Context:
 Question: {question}
 
 Answer:"""
+
+
+CONDENSE_QUESTION_TEMPLATE = """Given the conversation below and a follow-up question, rewrite the follow-up as a standalone question that can be understood without the conversation. Keep the language of the follow-up. Reply with the standalone question only.
+
+Conversation:
+{history}
+
+Follow-up question: {question}
+
+Standalone question:"""
+
+
+def _history_settings() -> tuple[int, int, bool]:
+    return (
+        int(os.getenv("HISTORY_MAX_MESSAGES", "6")),
+        int(os.getenv("HISTORY_MAX_CHARS", "4000")),
+        os.getenv("QUERY_CONDENSATION", "true").lower() == "true",
+    )
+
+
+def format_history(history: Optional[List[Dict[str, Any]]], max_messages: int, max_chars: int) -> str:
+    """Render the most recent messages, newest kept first when trimming to ``max_chars``."""
+    if not history or max_messages <= 0:
+        return ""
+    lines: List[str] = []
+    total = 0
+    for message in reversed(history[-max_messages:]):
+        speaker = "User" if message.get("role") == "user" else "Assistant"
+        line = f"{speaker}: {message.get('content', '')}"
+        if total + len(line) > max_chars:
+            break
+        lines.append(line)
+        total += len(line)
+    return "\n".join(reversed(lines))
 
 
 class RAGService:
@@ -93,6 +128,7 @@ class RAGService:
         include_sources: bool = True,
         prompt_type: Optional[str] = None,
         rerank: Optional[bool] = None,
+        history: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Execute enhanced RAG query with optional re-ranking and citation checking.
@@ -109,12 +145,16 @@ class RAGService:
             include_sources: Include source documents in response
             prompt_type: Override default prompt type (strict, citation, etc.)
             rerank: Force re-ranking on/off for this query (None = service default)
+            history: Previous session messages ({role, content}); follow-up
+                questions are rewritten into standalone ones for retrieval
 
         Returns:
             Dict with answer, sources, metadata, and optional citation check
         """
+        history_text = self._history_text(history)
+        search_query = self.condense_question(question, history_text)
         search_results, reranked = self.retrieve(
-            question,
+            search_query,
             top_k=top_k,
             filters=filters,
             min_score=min_score,
@@ -123,7 +163,7 @@ class RAGService:
             rerank=rerank,
         )
         active_prompt_type = prompt_type or self.prompt_type
-        prompt = self.build_prompt(question, search_results, active_prompt_type)
+        prompt = self.build_prompt(question, search_results, active_prompt_type, history_text)
 
         # Generate answer using LLM
         answer = self.llm_service.generate(
@@ -139,6 +179,7 @@ class RAGService:
                 "retrieved_docs": len(search_results),
                 "reranking_enabled": reranked,
                 "prompt_type": active_prompt_type,
+                "search_query": search_query,
             }
         }
 
@@ -179,10 +220,13 @@ class RAGService:
         max_tokens: Optional[int] = None,
         prompt_type: Optional[str] = None,
         rerank: Optional[bool] = None,
+        history: Optional[List[Dict[str, Any]]] = None,
     ) -> Iterator[Dict[str, Any]]:
         """Stream a RAG answer as events: ``sources`` first, then ``token``s, then ``done``."""
+        history_text = self._history_text(history)
+        search_query = self.condense_question(question, history_text)
         search_results, reranked = self.retrieve(
-            question,
+            search_query,
             top_k=top_k,
             filters=filters,
             min_score=min_score,
@@ -190,7 +234,7 @@ class RAGService:
             rerank=rerank,
         )
         active_prompt_type = prompt_type or self.prompt_type
-        prompt = self.build_prompt(question, search_results, active_prompt_type)
+        prompt = self.build_prompt(question, search_results, active_prompt_type, history_text)
         yield {"event": "sources", "data": self.format_sources(search_results)}
 
         parts: List[str] = []
@@ -207,9 +251,30 @@ class RAGService:
                     "retrieved_docs": len(search_results),
                     "reranking_enabled": reranked,
                     "prompt_type": active_prompt_type,
+                    "search_query": search_query,
                 },
             },
         }
+
+    def _history_text(self, history: Optional[List[Dict[str, Any]]]) -> str:
+        max_messages, max_chars, _ = _history_settings()
+        return format_history(history, max_messages, max_chars)
+
+    def condense_question(self, question: str, history_text: str) -> str:
+        """Rewrite a follow-up question into a standalone one, using the conversation."""
+        _, _, enabled = _history_settings()
+        if not history_text or not enabled:
+            return question
+        try:
+            standalone = self.llm_service.generate(
+                CONDENSE_QUESTION_TEMPLATE.format(history=history_text, question=question),
+                temperature=0.0,
+                max_tokens=256,
+            ).strip()
+        except Exception as e:
+            logger.warning(f"Question condensation failed, using the raw question: {e}")
+            return question
+        return standalone or question
 
     def retrieve(
         self,
@@ -255,12 +320,19 @@ class RAGService:
             logger.info(f"Re-ranked {len(ranked_docs)} documents")
         return search_results, use_reranker
 
-    def build_prompt(self, question: str, search_results: List[Dict[str, Any]], prompt_type: str) -> str:
+    def build_prompt(
+        self,
+        question: str,
+        search_results: List[Dict[str, Any]],
+        prompt_type: str,
+        history_text: str = "",
+    ) -> str:
         context = self._format_context(search_results)
+        prompt = None
         if prompt_type != "default":
             try:
                 from .prompts import build_prompt
-                return build_prompt(
+                prompt = build_prompt(
                     prompt_type=prompt_type,
                     query=question,
                     context=context,
@@ -268,7 +340,14 @@ class RAGService:
                 )
             except Exception as e:
                 logger.warning(f"Failed to build custom prompt: {e}. Using default.")
-        return self.prompt_template.format(context=context, question=question)
+        if prompt is None:
+            prompt = self.prompt_template.format(context=context, question=question)
+        if history_text:
+            prompt = (
+                "Previous conversation (use it only to understand the latest question; "
+                f"facts must still come from the context):\n{history_text}\n\n{prompt}"
+            )
+        return prompt
 
     @staticmethod
     def format_sources(search_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

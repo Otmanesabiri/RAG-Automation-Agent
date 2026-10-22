@@ -61,6 +61,7 @@ Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 - [docs/QUICKSTART.md](docs/QUICKSTART.md): local setup, tests, troubleshooting
 - [docs/api.md](docs/api.md): endpoints, streaming, errors
+- [docs/MCP.md](docs/MCP.md): MCP server for Claude Desktop / Claude Code
 - [docs/architecture.md](docs/architecture.md) and [docs/architecture/](docs/architecture/): components and PlantUML diagrams
 - [docs/data-flow.md](docs/data-flow.md): ingestion and query flows
 - [docs/RAG_ENHANCEMENTS.md](docs/RAG_ENHANCEMENTS.md): re-ranking, prompts, filters, citation checks

@@ -80,6 +80,11 @@ Roles: `reader` (query, agent, read documents), `editor` (+ ingest), `admin` (+ 
 - **Streaming** (`"stream": true`): the response is `text/event-stream` with events
   `sources` (list of sources), `token` (text chunk, repeated), then `done` (`{"answer", "metadata"}`), or `error` if generation fails mid-stream.
 
+### `POST /search`
+- **Purpose**: retrieval only (no LLM call): the passages `/query` would give to the model.
+- **Payload**: `{"query": "...", "top_k": 5, "search_mode": "hybrid", "rerank": null, "filters": {"attributes": {}}}`
+- **Response**: `{"results": [{"chunk_id", "document_id", "source", "section", "score", "content"}], "reranked": false}`. Tenant and access-level restrictions apply.
+
 ### `POST /agent`
 - **Purpose**: multi-step research. The LLM chooses tools (`search_documents`, `get_document`, `list_sources`, `summarize_document`) until it can answer; useful for comparisons and multi-part questions. Uses Claude's native tool use with `LLM_PROVIDER=anthropic`, a JSON action loop with other providers.
 - **Payload**: `{"question": "Compare the refund and shipping policies", "session_id": "optional", "max_iterations": 6}` (1-15, default `AGENT_MAX_ITERATIONS`).

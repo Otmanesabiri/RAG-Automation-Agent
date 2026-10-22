@@ -69,6 +69,14 @@ class QueryRequest(BaseModel):
     )
 
 
+class SearchRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=4000)
+    top_k: int = Field(5, ge=1, le=20)
+    filters: QueryFilters = Field(default_factory=QueryFilters)
+    search_mode: Optional[Literal["dense", "sparse", "hybrid"]] = None
+    rerank: Optional[bool] = None
+
+
 class FeedbackRequest(BaseModel):
     rating: Literal["up", "down"]
     session_id: Optional[str] = None

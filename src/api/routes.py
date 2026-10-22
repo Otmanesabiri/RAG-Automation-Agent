@@ -33,6 +33,7 @@ from .schemas import (
     IngestRequest,
     QueryRequest,
     QueryResponse,
+    SearchRequest,
     SessionCreateRequest,
     SessionResponse,
 )
@@ -272,6 +273,40 @@ def query_documents() -> Response:
     )
     session_store.append_message(session_id, "assistant", response.answer)
     return jsonify(response.model_dump())
+
+
+@api_bp.route("/search", methods=["POST"])
+@require_api_key
+@rate_limit
+def search_documents() -> Response:
+    """Retrieval only (no LLM): the passages /query would give to the model."""
+    payload = _parse_payload(SearchRequest)
+    scope_filters, levels = search_scope(current_principal())
+    filters = {**(payload.filters.attributes or {}), **scope_filters} or None
+    results, reranked = get_rag_service().retrieve(
+        payload.query,
+        top_k=payload.top_k,
+        filters=filters,
+        user_permissions=levels,
+        rerank=payload.rerank,
+        search_mode=payload.search_mode,
+    )
+    return jsonify(
+        {
+            "results": [
+                {
+                    "chunk_id": r["id"],
+                    "document_id": r.get("document_id"),
+                    "source": r.get("source"),
+                    "section": (r.get("metadata") or {}).get("section"),
+                    "score": r.get("score"),
+                    "content": r.get("content"),
+                }
+                for r in results
+            ],
+            "reranked": reranked,
+        }
+    )
 
 
 @api_bp.route("/agent", methods=["POST"])

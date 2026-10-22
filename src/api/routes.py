@@ -12,7 +12,16 @@ from pydantic import ValidationError
 from ..auth import current_client_id, rate_limit, require_api_key
 from ..ingestion.config import ChunkingConfig
 from ..observability import get_logger, track_ingestion, track_query
-from .dependencies import get_agent_runner, get_ingestion_pipeline, get_rag_service, get_session_store, get_vector_store
+from .dependencies import (
+    get_agent_runner,
+    get_connectors,
+    get_ingestion_pipeline,
+    get_job_manager,
+    get_rag_service,
+    get_session_store,
+    get_sync_service,
+    get_vector_store,
+)
 from .schemas import (
     AgentRequest,
     ErrorResponse,
@@ -67,6 +76,19 @@ def ingest_documents() -> Response:
             error = ErrorResponse(code="validation_error", message=str(exc))
             return jsonify({"error": error.model_dump()}), 422
 
+    if request.args.get("async", "").lower() == "true":
+        job_id = get_job_manager().submit(
+            "ingest",
+            lambda progress: {"documents": _ingest_documents(payload, pipeline, vector_store, chunking)},
+            owner=current_client_id(),
+        )
+        return jsonify({"status": "queued", "job_id": job_id}), 202
+
+    created_documents = _ingest_documents(payload, pipeline, vector_store, chunking)
+    return jsonify({"status": "indexed", "documents": created_documents}), 202
+
+
+def _ingest_documents(payload, pipeline, vector_store, chunking) -> list:
     created_documents = []
     for document in payload.documents:
         metadata = {**document.metadata}
@@ -93,8 +115,45 @@ def ingest_documents() -> Response:
                 "mime_type": result.mime_type,
             }
         )
+    return created_documents
 
-    return jsonify({"status": "indexed", "documents": created_documents}), 202
+
+@api_bp.route("/connectors", methods=["GET"])
+@require_api_key
+@rate_limit
+def list_connectors() -> Response:
+    connectors = get_connectors()
+    return jsonify({"connectors": [{"name": name, "type": type(c).__name__} for name, c in connectors.items()]})
+
+
+@api_bp.route("/connectors/<name>/sync", methods=["POST"])
+@require_api_key
+@rate_limit
+def sync_connector(name: str) -> Response:
+    """Start an incremental sync of a configured connector; returns a job id."""
+    connector = get_connectors().get(name)
+    if connector is None:
+        error = ErrorResponse(code="not_found", message="Connector not found", details=[{"connector": name}])
+        return jsonify({"error": error.model_dump()}), 404
+    full = bool((request.get_json(silent=True) or {}).get("full", False))
+    sync_service = get_sync_service()
+    job_id = get_job_manager().submit(
+        "sync",
+        lambda progress: sync_service.sync(connector, full=full, progress=progress).as_dict(),
+        owner=current_client_id(),
+    )
+    return jsonify({"status": "queued", "job_id": job_id, "connector": name}), 202
+
+
+@api_bp.route("/jobs/<job_id>", methods=["GET"])
+@require_api_key
+@rate_limit
+def get_job(job_id: str) -> Response:
+    job = get_job_manager().get(job_id, owner=current_client_id())
+    if job is None:
+        error = ErrorResponse(code="not_found", message="Job not found", details=[{"job_id": job_id}])
+        return jsonify({"error": error.model_dump()}), 404
+    return jsonify(job)
 
 
 @api_bp.route("/documents", methods=["GET"])

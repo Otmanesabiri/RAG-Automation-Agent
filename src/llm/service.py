@@ -8,6 +8,8 @@ from typing import Any, Optional
 
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from ..observability.metrics import record_llm_usage
+
 DEFAULT_MODELS = {
     "openai": "gpt-4.1",
     "anthropic": "claude-opus-5-5",
@@ -69,8 +71,7 @@ class OpenAILLMProvider(LLMProvider):
             from openai import OpenAI
         except ImportError as exc:
             raise RuntimeError(
-                "openai package is required for OpenAILLMProvider. "
-                "Install with: pip install openai"
+                "openai package is required for OpenAILLMProvider. " "Install with: pip install openai"
             ) from exc
 
         self.model = model or _default_model("openai")
@@ -95,6 +96,8 @@ class OpenAILLMProvider(LLMProvider):
             max_tokens=max_tokens,
             **kwargs,
         )
+        if response.usage:
+            record_llm_usage("openai", self.model, response.usage.prompt_tokens, response.usage.completion_tokens)
         return response.choices[0].message.content
 
     def stream_generate(
@@ -111,11 +114,14 @@ class OpenAILLMProvider(LLMProvider):
             temperature=temperature,
             max_tokens=max_tokens,
             stream=True,
+            stream_options={"include_usage": True},
             **kwargs,
         )
         for chunk in stream:
             if chunk.choices and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
+            if getattr(chunk, "usage", None):  # final chunk, no choices
+                record_llm_usage("openai", self.model, chunk.usage.prompt_tokens, chunk.usage.completion_tokens)
 
 
 class AnthropicLLMProvider(LLMProvider):
@@ -138,8 +144,7 @@ class AnthropicLLMProvider(LLMProvider):
             from anthropic import Anthropic
         except ImportError as exc:
             raise RuntimeError(
-                "anthropic package is required for AnthropicLLMProvider. "
-                "Install with: pip install anthropic"
+                "anthropic package is required for AnthropicLLMProvider. " "Install with: pip install anthropic"
             ) from exc
 
         self.model = model or _default_model("anthropic")
@@ -168,6 +173,7 @@ class AnthropicLLMProvider(LLMProvider):
         **kwargs: Any,
     ) -> str:
         response = self.client.beta.messages.create(**self._request(prompt, max_tokens, 16000, **kwargs))
+        self._record_usage(response)
         if response.stop_reason == "refusal":
             raise LLMRefusalError("The model declined to answer this request")
         return "".join(block.text for block in response.content if block.type == "text")
@@ -183,8 +189,17 @@ class AnthropicLLMProvider(LLMProvider):
         with self.client.beta.messages.stream(**self._request(prompt, max_tokens, 64000, **kwargs)) as stream:
             for text in stream.text_stream:
                 yield text
-            if stream.get_final_message().stop_reason == "refusal":
+            final = stream.get_final_message()
+            self._record_usage(final)
+            if final.stop_reason == "refusal":
                 raise LLMRefusalError("The model declined to answer this request")
+
+    def _record_usage(self, message) -> None:
+        usage = getattr(message, "usage", None)
+        if usage:
+            # A refusal fallback may have served the request with another model.
+            model = getattr(message, "model", None) or self.model
+            record_llm_usage("anthropic", model, usage.input_tokens, usage.output_tokens)
 
 
 class GeminiLLMProvider(LLMProvider):
@@ -199,8 +214,7 @@ class GeminiLLMProvider(LLMProvider):
             from google import genai
         except ImportError as exc:
             raise RuntimeError(
-                "google-genai package is required for GeminiLLMProvider. "
-                "Install with: pip install google-genai"
+                "google-genai package is required for GeminiLLMProvider. " "Install with: pip install google-genai"
             ) from exc
 
         self.model = model or _default_model("gemini")
@@ -230,6 +244,7 @@ class GeminiLLMProvider(LLMProvider):
             contents=prompt,
             config=self._config(temperature, max_tokens),
         )
+        self._record_usage(getattr(response, "usage_metadata", None))
         return response.text
 
     def stream_generate(
@@ -245,9 +260,16 @@ class GeminiLLMProvider(LLMProvider):
             contents=prompt,
             config=self._config(temperature, max_tokens),
         )
+        usage = None
         for chunk in response:
+            usage = getattr(chunk, "usage_metadata", None) or usage  # cumulative; last one wins
             if chunk.text:
                 yield chunk.text
+        self._record_usage(usage)
+
+    def _record_usage(self, usage) -> None:
+        if usage:
+            record_llm_usage("gemini", self.model, usage.prompt_token_count, usage.candidates_token_count)
 
 
 class LLMService:
@@ -287,7 +309,4 @@ class LLMService:
         elif provider_name == "gemini":
             return GeminiLLMProvider()
         else:
-            raise ValueError(
-                f"Unknown LLM provider: {provider_name}. "
-                "Supported providers: openai, anthropic, gemini"
-            )
+            raise ValueError(f"Unknown LLM provider: {provider_name}. " "Supported providers: openai, anthropic, gemini")

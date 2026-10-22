@@ -1,3 +1,18 @@
 # Optional: lets the loader fall back to Unstructured for formats other than
 # PDF, DOCX, TXT, Markdown and HTML. Large dependency tree; not in the Docker image.
 unstructured>=0.15.7
+
+# Optional: OCR for scanned PDF pages (also needs the tesseract and poppler binaries)
+pytesseract>=0.3.10
+pdf2image>=1.17.0
+
+# Optional: OpenTelemetry tracing (enabled when OTEL_EXPORTER_OTLP_ENDPOINT is set)
+opentelemetry-sdk>=1.27.0
+opentelemetry-exporter-otlp-proto-http>=1.27.0
+opentelemetry-instrumentation-flask>=0.48b0
+
+# Optional: S3 connector
+boto3>=1.34.0
+
+# Optional: MCP server (scripts/mcp_server.py), installed where the MCP client runs
+mcp>=2.3.0

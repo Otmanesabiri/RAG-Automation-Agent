@@ -3,13 +3,15 @@
 import unittest
 from dataclasses import dataclass, field
 from typing import Any, Dict
+
+
 @dataclass
 class _DocumentStub:
     page_content: str
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-from src.ingestion.chunker import ChunkingService, ChunkingConfig
+from src.ingestion.chunker import ChunkingConfig, ChunkingService
 
 
 class ChunkingServiceTestCase(unittest.TestCase):

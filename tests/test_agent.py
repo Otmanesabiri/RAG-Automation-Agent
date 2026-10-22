@@ -126,16 +126,16 @@ def test_runner_picks_backend_by_provider():
 
 def test_document_tools_use_the_rag_stack():
     class _Rag:
-        def retrieve(self, query, top_k, search_mode=None):
+        def retrieve(self, query, top_k, search_mode=None, **scope):
             return [
                 {"id": "c1", "document_id": "d1", "source": "a.md", "content": "text", "metadata": {"section": "S"}}
             ], False
 
     class _Store:
-        def get_document(self, document_id):
+        def get_document(self, document_id, **scope):
             return {"source": "a.md", "chunks": [{"content": "one"}, {"content": "two"}]} if document_id == "d1" else None
 
-        def list_documents(self, size):
+        def list_documents(self, size, **scope):
             return {"documents": [{"document_id": "d1"}]}
 
     registry = build_document_tools(_Rag(), _Store(), _ScriptedLLM(["- summary"]))

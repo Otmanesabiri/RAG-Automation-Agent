@@ -23,8 +23,9 @@ def configuration_problems() -> List[str]:
     if os.getenv("SECRET_KEY", "") in INSECURE_DEFAULTS:
         problems.append("SECRET_KEY must be set to a random value")
     if os.getenv("AUTH_ENABLED", "true").lower() == "true":
-        if not [k for k in os.getenv("API_KEYS", "").split(",") if k.strip()]:
-            problems.append("API_KEYS must contain at least one key when AUTH_ENABLED=true")
+        has_keys = [k for k in os.getenv("API_KEYS", "").split(",") if k.strip()]
+        if not has_keys and not (os.getenv("JWT_JWKS_URL") or os.getenv("JWT_SECRET")):
+            problems.append("API_KEYS or JWT settings (JWT_JWKS_URL / JWT_SECRET) are required when AUTH_ENABLED=true")
     else:
         problems.append("AUTH_ENABLED=false is not allowed in production")
     es_password = os.getenv("ELASTICSEARCH_PASSWORD") or os.getenv("ELASTIC_PASSWORD") or ""

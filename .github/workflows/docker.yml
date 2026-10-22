@@ -19,6 +19,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      security-events: write  # upload Trivy SARIF to code scanning
       id-token: write
 
     steps:

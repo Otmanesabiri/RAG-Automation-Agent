@@ -51,7 +51,7 @@ def current_client_id() -> str:
 
 def _is_auth_enabled() -> bool:
     """Check if authentication is globally enabled."""
-    return os.getenv("AUTH_ENABLED", "false").lower() == "true"
+    return os.getenv("AUTH_ENABLED", "true").lower() == "true"
 
 
 def _extract_api_key(req: Request) -> Optional[str]:

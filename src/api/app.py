@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
+import secrets
 
 from dotenv import load_dotenv
 from flask import Flask
 from flask_cors import CORS
 
+from ..config import cors_origins, validate_settings
 from .dependencies import register_dependencies
 from .error_handlers import register_error_handlers
 from .routes import api_bp
@@ -16,11 +18,12 @@ from ..observability import configure_logging, register_metrics
 
 def create_app(config: dict | None = None) -> Flask:
     load_dotenv()
+    validate_settings()
     app = Flask(__name__)
     app.config.update(
         {
             "APP_VERSION": os.getenv("APP_VERSION", "0.1.0"),
-            "SECRET_KEY": os.getenv("SECRET_KEY", "changeme-in-production"),
+            "SECRET_KEY": os.getenv("SECRET_KEY") or secrets.token_hex(32),
             "LOG_LEVEL": os.getenv("LOG_LEVEL", "INFO"),
             "LOG_FILE": os.getenv("LOG_FILE"),
         }
@@ -34,7 +37,9 @@ def create_app(config: dict | None = None) -> Flask:
         log_file=app.config.get("LOG_FILE"),
     )
 
-    CORS(app)
+    origins = cors_origins()
+    if origins:
+        CORS(app, origins=origins)
     register_dependencies(app)
     register_error_handlers(app)
     app.register_blueprint(api_bp)

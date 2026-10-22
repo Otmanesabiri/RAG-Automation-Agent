@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import os
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from elasticsearch import Elasticsearch
-
 from ..embeddings.service import EmbeddingService
 from ..ingestion.types import DocumentLike
+from .client import create_es_client
 
 
 class ElasticsearchVectorStore:
@@ -26,18 +24,7 @@ class ElasticsearchVectorStore:
     ) -> None:
         self.index_name = index_name
         self.embedding_service = embedding_service
-        self.client = self._create_client(
-            es_url or os.getenv("ELASTICSEARCH_URL", "http://localhost:9200"),
-            es_username or os.getenv("ELASTICSEARCH_USERNAME", "elastic"),
-            es_password or os.getenv("ELASTICSEARCH_PASSWORD", os.getenv("ELASTIC_PASSWORD", "changeme")),
-        )
-
-    def _create_client(self, url: str, username: str, password: str) -> Elasticsearch:
-        return Elasticsearch(
-            hosts=[url],
-            basic_auth=(username, password),
-            verify_certs=False,
-        )
+        self.client = create_es_client(es_url, es_username, es_password)
 
     def add_documents(
         self,

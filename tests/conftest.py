@@ -41,6 +41,7 @@ class FakeRAGService:
 def env(monkeypatch):
     """Deterministic environment, independent from any local .env file."""
     values = {
+        "FLASK_ENV": "testing",
         "AUTH_ENABLED": "true",
         "API_KEYS": API_KEY,
         "RATE_LIMIT_ENABLED": "true",

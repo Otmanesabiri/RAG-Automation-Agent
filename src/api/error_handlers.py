@@ -6,8 +6,12 @@ from flask import Blueprint, jsonify
 from werkzeug.exceptions import HTTPException
 
 from ..ingestion.loaders import UnsupportedDocumentTypeError
+from ..observability import get_logger
 from ..ingestion.url_fetcher import UnsafeURLError
 from .schemas import ErrorResponse
+
+
+logger = get_logger(__name__)
 
 
 def register_error_handlers(app) -> None:
@@ -40,9 +44,11 @@ def register_error_handlers(app) -> None:
         return jsonify({"error": response.model_dump()}), 422
 
     @app.errorhandler(Exception)
-    def handle_generic_error(error: Exception):  # pragma: no cover - fallback handler
+    def handle_generic_error(error: Exception):
+        # Internal details (hosts, stack traces, provider errors) stay in the logs.
+        logger.exception("Unhandled error: {}", error)
         response = ErrorResponse(
             code="internal_server_error",
-            message=str(error),
+            message="An internal error occurred",
         )
         return jsonify({"error": response.model_dump()}), 500

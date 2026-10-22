@@ -59,12 +59,20 @@ class ToolRegistry:
         return ToolResult(text)
 
 
-def build_document_tools(rag_service, vector_store, llm_service) -> ToolRegistry:
-    """Default toolset over the indexed documents."""
+def build_document_tools(rag_service, vector_store, llm_service, scope_provider=None) -> ToolRegistry:
+    """Default toolset over the indexed documents.
+
+    `scope_provider()` returns the caller's mandatory (filters, access levels), so
+    the agent can only see what the caller is allowed to see.
+    """
     registry = ToolRegistry()
 
+    def scope():
+        filters, levels = scope_provider() if scope_provider else ({}, None)
+        return {"filters": filters or None, "user_permissions": levels}
+
     def search_documents(query: str, top_k: int = 5, search_mode: str = None) -> List[Dict[str, Any]]:
-        results, _ = rag_service.retrieve(query, top_k=max(1, min(int(top_k), 10)), search_mode=search_mode)
+        results, _ = rag_service.retrieve(query, top_k=max(1, min(int(top_k), 10)), search_mode=search_mode, **scope())
         return [
             {
                 "chunk_id": r["id"],
@@ -77,7 +85,7 @@ def build_document_tools(rag_service, vector_store, llm_service) -> ToolRegistry
         ]
 
     def get_document(document_id: str) -> Dict[str, Any]:
-        document = vector_store.get_document(document_id)
+        document = vector_store.get_document(document_id, **scope())
         if document is None:
             raise LookupError(f"No document with id {document_id}")
         return {
@@ -87,7 +95,7 @@ def build_document_tools(rag_service, vector_store, llm_service) -> ToolRegistry
         }
 
     def list_sources(size: int = 20) -> List[Dict[str, Any]]:
-        return vector_store.list_documents(size=max(1, min(int(size), 100)))["documents"]
+        return vector_store.list_documents(size=max(1, min(int(size), 100)), **scope())["documents"]
 
     def summarize_document(document_id: str, focus: str = "") -> str:
         text = get_document(document_id)["text"][:20000]

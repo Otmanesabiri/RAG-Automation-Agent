@@ -9,6 +9,7 @@ from typing import Any, Dict
 from flask import Flask, current_app
 
 from ..agent import AgentRunner, build_document_tools
+from ..auth import current_principal, search_scope
 from ..connectors import JobManager, SourceConnector, SyncService, SyncStateStore, load_connectors
 from ..embeddings.service import EmbeddingService
 from ..ingestion.config import ChunkingConfig, LoaderConfig
@@ -130,7 +131,12 @@ def get_agent_runner() -> AgentRunner:
 @lru_cache(maxsize=1)
 def _build_agent_runner() -> AgentRunner:
     llm_service = _build_llm_service()
-    registry = build_document_tools(_build_rag_service(), _build_vector_store(), llm_service)
+    registry = build_document_tools(
+        _build_rag_service(),
+        _build_vector_store(),
+        llm_service,
+        scope_provider=lambda: search_scope(current_principal()),
+    )
     return AgentRunner(llm_service, registry)
 
 

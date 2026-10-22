@@ -1,6 +1,11 @@
 # API Reference
 
-REST endpoints of the Flask interface. Every endpoint except `/health` and `/metrics` requires an API key in the `X-API-Key` header (when `AUTH_ENABLED=true`, the default).
+REST endpoints of the Flask interface. Every endpoint except `/health` and `/metrics` requires authentication (when `AUTH_ENABLED=true`, the default):
+
+- **API key** in `X-API-Key`: a service identity, `admin` role, default tenant, all documents (restrict individual keys with `API_KEY_SCOPES`).
+- **JWT** in `Authorization: Bearer <token>` when `JWT_JWKS_URL` (OIDC) or `JWT_SECRET` is set: tenant, roles and document access levels come from the token claims, never from the payload.
+
+Roles: `reader` (query, agent, read documents), `editor` (+ ingest), `admin` (+ delete documents, sync connectors). With `MULTI_TENANT=true`, ingested documents are stamped with the caller's tenant and every search, listing and deletion is limited to it; documents with a `metadata.access_level` are only visible to callers holding that level. Actions are written to the audit log (`AUDIT_LOG_FILE`).
 
 ## Base URL
 - Local development: `http://localhost:8000`

@@ -9,9 +9,11 @@ from typing import Any, Dict
 from flask import Blueprint, Response, current_app, jsonify, request, stream_with_context
 from pydantic import ValidationError
 
-from ..auth import current_client_id, rate_limit, require_api_key
+from ..auth import current_client_id, current_principal, rate_limit, require_api_key, require_role, search_scope
+from ..auth.identity import multi_tenant_enabled
 from ..ingestion.config import ChunkingConfig
 from ..observability import get_logger, track_ingestion, track_query
+from ..observability.audit import audit
 from .dependencies import (
     get_agent_runner,
     get_connectors,
@@ -54,6 +56,7 @@ def health() -> Response:
 
 @api_bp.route("/ingest", methods=["POST"])
 @require_api_key
+@require_role("editor")
 @rate_limit
 @track_ingestion
 def ingest_documents() -> Response:
@@ -76,22 +79,28 @@ def ingest_documents() -> Response:
             error = ErrorResponse(code="validation_error", message=str(exc))
             return jsonify({"error": error.model_dump()}), 422
 
+    tenant = current_principal().tenant if multi_tenant_enabled() else None
+    audit("ingest", documents=len(payload.documents), source_type=payload.source)
     if request.args.get("async", "").lower() == "true":
         job_id = get_job_manager().submit(
             "ingest",
-            lambda progress: {"documents": _ingest_documents(payload, pipeline, vector_store, chunking)},
+            lambda progress: {"documents": _ingest_documents(payload, pipeline, vector_store, chunking, tenant)},
             owner=current_client_id(),
         )
         return jsonify({"status": "queued", "job_id": job_id}), 202
 
-    created_documents = _ingest_documents(payload, pipeline, vector_store, chunking)
+    created_documents = _ingest_documents(payload, pipeline, vector_store, chunking, tenant)
     return jsonify({"status": "indexed", "documents": created_documents}), 202
 
 
-def _ingest_documents(payload, pipeline, vector_store, chunking) -> list:
+def _ingest_documents(payload, pipeline, vector_store, chunking, tenant=None) -> list:
     created_documents = []
     for document in payload.documents:
         metadata = {**document.metadata}
+        if tenant:  # set by the server from the caller's identity, never by the client
+            metadata["tenant"] = tenant
+        else:
+            metadata.pop("tenant", None)
         if document.mime_type:
             metadata.setdefault("mime_type", document.mime_type)
 
@@ -108,7 +117,7 @@ def _ingest_documents(payload, pipeline, vector_store, chunking) -> list:
 
         created_documents.append(
             {
-                "document_id": vector_store.document_id_for(result.source),
+                "document_id": vector_store.document_id_for(result.source, tenant),
                 "source": result.source,
                 "chunks": len(result.chunks),
                 "indexed_ids": doc_ids,
@@ -128,6 +137,7 @@ def list_connectors() -> Response:
 
 @api_bp.route("/connectors/<name>/sync", methods=["POST"])
 @require_api_key
+@require_role("admin")
 @rate_limit
 def sync_connector(name: str) -> Response:
     """Start an incremental sync of a configured connector; returns a job id."""
@@ -136,6 +146,7 @@ def sync_connector(name: str) -> Response:
         error = ErrorResponse(code="not_found", message="Connector not found", details=[{"connector": name}])
         return jsonify({"error": error.model_dump()}), 404
     full = bool((request.get_json(silent=True) or {}).get("full", False))
+    audit("connector_sync", connector=name, full=full)
     sync_service = get_sync_service()
     job_id = get_job_manager().submit(
         "sync",
@@ -164,7 +175,10 @@ def list_documents() -> Response:
         size = min(max(int(request.args.get("size", 20)), 1), 100)
     except ValueError:
         size = 20
-    page = get_vector_store().list_documents(size=size, after=request.args.get("after"))
+    filters, levels = search_scope(current_principal())
+    page = get_vector_store().list_documents(
+        size=size, after=request.args.get("after"), filters=filters, user_permissions=levels
+    )
     return jsonify(page)
 
 
@@ -172,7 +186,8 @@ def list_documents() -> Response:
 @require_api_key
 @rate_limit
 def get_document(document_id: str) -> Response:
-    document = get_vector_store().get_document(document_id)
+    filters, levels = search_scope(current_principal())
+    document = get_vector_store().get_document(document_id, filters=filters, user_permissions=levels)
     if document is None:
         return _document_not_found(document_id)
     return jsonify(document)
@@ -180,9 +195,12 @@ def get_document(document_id: str) -> Response:
 
 @api_bp.route("/documents/<document_id>", methods=["DELETE"])
 @require_api_key
+@require_role("admin")
 @rate_limit
 def delete_document(document_id: str) -> Response:
-    deleted = get_vector_store().delete_document(document_id)
+    filters, levels = search_scope(current_principal())
+    deleted = get_vector_store().delete_document(document_id, filters=filters, user_permissions=levels)
+    audit("delete_document", document_id=document_id, deleted_chunks=deleted)
     if not deleted:
         return _document_not_found(document_id)
     logger.info(f"Deleted document {document_id} ({deleted} chunks)")
@@ -212,9 +230,13 @@ def query_documents() -> Response:
 
     logger.info(f"Executing RAG query: {payload.query[:100]}... (session={session_id})")
 
+    # The caller's tenant and access levels are enforced on top of its own filters.
+    scope_filters, levels = search_scope(current_principal())
+    user_filters = (payload.filters.attributes if payload.filters else None) or {}
     options = {
         "top_k": payload.top_k,
-        "filters": payload.filters.attributes if payload.filters else None,
+        "filters": {**user_filters, **scope_filters} or None,
+        "user_permissions": levels,
         "min_score": payload.min_score,
         "max_age_days": payload.max_age_days,
         "prompt_type": payload.prompt_type,
@@ -226,8 +248,10 @@ def query_documents() -> Response:
     }
 
     if payload.stream:
+        audit("query", session_id=session_id, stream=True)
         return _stream_answer(rag_service, session_store, session_id, payload.query, options)
 
+    audit("query", session_id=session_id, stream=False)
     # Execute RAG query with retrieval + generation
     rag_response = rag_service.query(question=payload.query, include_sources=True, **options)
 
@@ -267,6 +291,7 @@ def run_agent() -> Response:
         session_id = session_store.create_session(user_id=None, owner=owner)
     session_store.append_message(session_id, "user", payload.question)
 
+    audit("agent", session_id=session_id)
     result = get_agent_runner().run(payload.question, max_iterations=payload.max_iterations, history=history)
     session_store.append_message(session_id, "assistant", result.answer)
     logger.info(f"Agent finished in {result.iterations} iteration(s), {len(result.steps)} tool call(s)")

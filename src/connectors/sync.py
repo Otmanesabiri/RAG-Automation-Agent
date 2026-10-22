@@ -96,7 +96,7 @@ class SyncService:
                 progress(report.as_dict())
 
         for source in set(known) - set(current):
-            self.vector_store.delete_document(self.vector_store.document_id_for(source))
+            self.vector_store.delete_document(self.vector_store.document_id_for(source, connector.metadata.get("tenant")))
             report.deleted += 1
 
         self.state.save(connector.name, current)

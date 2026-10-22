@@ -22,7 +22,7 @@ sentence-transformers>=3.0.1
 torch>=2.3.0
 
 # --- Data layer ---
-elasticsearch>=8.14.0,<9
+elasticsearch>=9.5.1,<10
 redis>=5.0.0
 
 # --- API ---

@@ -108,6 +108,13 @@ For scheduled syncs, run `python scripts/sync_sources.py [name...]` from cron or
 ### `DELETE /documents/{document_id}`
 - **Response**: `{"document_id": "3f2a...", "deleted_chunks": 12}`, or `404`.
 
+### `GET /ui`
+Chat page (no build step): enter an API key or a JWT, ask questions (streamed answers with sources) or switch to agent mode, upload a document, rate answers 👍/👎.
+
+### `POST /feedback`
+- **Payload**: `{"rating": "up" | "down", "session_id", "question", "answer", "comment"}` (`201`). Counted in `rag_agent_feedback_total{rating}`.
+- `GET /feedback?limit=50` (admin): most recent entries, limited to the caller's tenant in multi-tenant mode.
+
 ### `POST /sessions`
 - **Payload**: `{ "user_id": "u-42", "metadata": {"locale": "fr-FR"} }`
 - **Response** (`201`): the session, including `session_id`.

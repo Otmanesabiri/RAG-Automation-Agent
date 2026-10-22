@@ -18,6 +18,7 @@ from ..llm.rag_service import RAGService
 from ..llm.service import LLMService
 from ..redis_client import get_redis_client
 from ..vector_store.elasticsearch_store import ElasticsearchVectorStore
+from .feedback import FeedbackStore
 from .state import RedisSessionStore, SessionStore, build_session_store
 
 
@@ -114,6 +115,13 @@ def get_sync_service() -> SyncService:
 @lru_cache(maxsize=1)
 def _build_sync_service() -> SyncService:
     return SyncService(_build_pipeline(), _build_vector_store(), SyncStateStore(get_redis_client()))
+
+
+def get_feedback_store() -> FeedbackStore:
+    store = current_app.extensions.get("feedback_store")
+    if store is None:
+        store = current_app.extensions["feedback_store"] = FeedbackStore(get_redis_client())
+    return store
 
 
 def get_job_manager() -> JobManager:

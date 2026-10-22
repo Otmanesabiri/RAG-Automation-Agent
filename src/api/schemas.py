@@ -69,6 +69,14 @@ class QueryRequest(BaseModel):
     )
 
 
+class FeedbackRequest(BaseModel):
+    rating: Literal["up", "down"]
+    session_id: Optional[str] = None
+    question: Optional[str] = Field(None, max_length=4000)
+    answer: Optional[str] = Field(None, max_length=20000)
+    comment: Optional[str] = Field(None, max_length=2000)
+
+
 class AgentRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=4000)
     session_id: Optional[str] = None

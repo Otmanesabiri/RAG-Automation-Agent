@@ -8,6 +8,8 @@ from typing import List, Optional
 
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from ..observability.metrics import record_embedding_usage
+
 
 class EmbeddingProvider(ABC):
     """Abstract base for embedding providers."""
@@ -110,10 +112,14 @@ class EmbeddingService:
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         if not texts:
             return []
-        return self.provider.embed_documents(texts)
+        embeddings = self.provider.embed_documents(texts)
+        record_embedding_usage(texts)
+        return embeddings
 
     def embed_query(self, text: str) -> List[float]:
-        return self.provider.embed_query(text)
+        embedding = self.provider.embed_query(text)
+        record_embedding_usage([text])
+        return embedding
 
     @property
     def dimension(self) -> int:

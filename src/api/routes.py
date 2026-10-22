@@ -12,8 +12,9 @@ from pydantic import ValidationError
 from ..auth import current_client_id, rate_limit, require_api_key
 from ..ingestion.config import ChunkingConfig
 from ..observability import get_logger, track_ingestion, track_query
-from .dependencies import get_ingestion_pipeline, get_rag_service, get_session_store, get_vector_store
+from .dependencies import get_agent_runner, get_ingestion_pipeline, get_rag_service, get_session_store, get_vector_store
 from .schemas import (
+    AgentRequest,
     ErrorResponse,
     IngestRequest,
     QueryRequest,
@@ -184,6 +185,33 @@ def query_documents() -> Response:
     )
     session_store.append_message(session_id, "assistant", response.answer)
     return jsonify(response.model_dump())
+
+
+@api_bp.route("/agent", methods=["POST"])
+@require_api_key
+@rate_limit
+@track_query
+def run_agent() -> Response:
+    """Multi-step research: the LLM searches and reads documents with tools before answering."""
+    payload = _parse_payload(AgentRequest)
+    session_store = get_session_store()
+    owner = current_client_id()
+
+    history = []
+    if payload.session_id:
+        session = session_store.get_session(payload.session_id, owner=owner)
+        if not session:
+            return _session_not_found(payload.session_id)
+        session_id = payload.session_id
+        history = list(session["messages"])
+    else:
+        session_id = session_store.create_session(user_id=None, owner=owner)
+    session_store.append_message(session_id, "user", payload.question)
+
+    result = get_agent_runner().run(payload.question, max_iterations=payload.max_iterations, history=history)
+    session_store.append_message(session_id, "assistant", result.answer)
+    logger.info(f"Agent finished in {result.iterations} iteration(s), {len(result.steps)} tool call(s)")
+    return jsonify({**result.as_dict(), "session_id": session_id})
 
 
 @api_bp.route("/sessions", methods=["POST"])

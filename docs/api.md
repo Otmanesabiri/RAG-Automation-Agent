@@ -75,6 +75,15 @@ REST endpoints of the Flask interface. Every endpoint except `/health` and `/met
 - **Streaming** (`"stream": true`): the response is `text/event-stream` with events
   `sources` (list of sources), `token` (text chunk, repeated), then `done` (`{"answer", "metadata"}`), or `error` if generation fails mid-stream.
 
+### `POST /agent`
+- **Purpose**: multi-step research. The LLM chooses tools (`search_documents`, `get_document`, `list_sources`, `summarize_document`) until it can answer; useful for comparisons and multi-part questions. Uses Claude's native tool use with `LLM_PROVIDER=anthropic`, a JSON action loop with other providers.
+- **Payload**: `{"question": "Compare the refund and shipping policies", "session_id": "optional", "max_iterations": 6}` (1-15, default `AGENT_MAX_ITERATIONS`).
+- **Response**:
+  ```json
+  {"answer": "...", "steps": [{"tool": "search_documents", "input": {"query": "refund policy"}, "output_preview": "...", "is_error": false}], "iterations": 3, "stopped_reason": "answered", "session_id": "..."}
+  ```
+  `stopped_reason` is `answered`, `max_iterations` or `max_tokens`.
+
 ### `GET /documents?size=20&after=<document_id>`
 - **Purpose**: List indexed source documents (one entry per document).
 - **Response**: `{"documents": [{"document_id", "source", "mime_type", "chunks", "indexed_at"}], "next": "<cursor or null>"}`

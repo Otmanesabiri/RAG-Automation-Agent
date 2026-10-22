@@ -160,6 +160,7 @@ def query_documents() -> Response:
         "prompt_type": payload.prompt_type,
         "rerank": payload.rerank,
         "search_mode": payload.search_mode,
+        "query_expansion": payload.query_expansion,
         "history": history,
     }
 

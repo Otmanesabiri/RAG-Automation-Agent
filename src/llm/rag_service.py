@@ -6,7 +6,7 @@ import logging
 import os
 from typing import Any, Dict, Iterator, List, Optional
 
-from ..vector_store.elasticsearch_store import ElasticsearchVectorStore
+from ..vector_store.elasticsearch_store import ElasticsearchVectorStore, reciprocal_rank_fusion
 from .service import LLMService
 from .prompts import PromptBuilder, StrictRAGPrompt
 
@@ -47,6 +47,17 @@ Conversation:
 Follow-up question: {question}
 
 Standalone question:"""
+
+
+QUERY_EXPANSIONS = {"none", "multi_query", "hyde"}
+
+MULTI_QUERY_TEMPLATE = """Write {count} different search queries that could retrieve documents answering the question below. Vary the wording and use synonyms. Keep the language of the question. One query per line, no numbering, no other text.
+
+Question: {question}"""
+
+HYDE_TEMPLATE = """Write a short factual passage (3-5 sentences) that would answer the question below, as it might appear in a reference document. Keep the language of the question. Write only the passage.
+
+Question: {question}"""
 
 
 def _history_settings() -> tuple[int, int, bool]:
@@ -130,6 +141,7 @@ class RAGService:
         rerank: Optional[bool] = None,
         history: Optional[List[Dict[str, Any]]] = None,
         search_mode: Optional[str] = None,
+        query_expansion: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Execute enhanced RAG query with optional re-ranking and citation checking.
@@ -147,6 +159,7 @@ class RAGService:
             prompt_type: Override default prompt type (strict, citation, etc.)
             rerank: Force re-ranking on/off for this query (None = service default)
             search_mode: dense, sparse or hybrid retrieval (None = SEARCH_MODE)
+            query_expansion: none, multi_query or hyde (None = QUERY_EXPANSION)
             history: Previous session messages ({role, content}); follow-up
                 questions are rewritten into standalone ones for retrieval
 
@@ -155,6 +168,7 @@ class RAGService:
         """
         history_text = self._history_text(history)
         search_query = self.condense_question(question, history_text)
+        extra_queries = self.expand_query(search_query, query_expansion)
         search_results, reranked = self.retrieve(
             search_query,
             top_k=top_k,
@@ -164,6 +178,7 @@ class RAGService:
             user_permissions=user_permissions,
             rerank=rerank,
             search_mode=search_mode,
+            extra_queries=extra_queries,
         )
         active_prompt_type = prompt_type or self.prompt_type
         prompt = self.build_prompt(question, search_results, active_prompt_type, history_text)
@@ -183,6 +198,7 @@ class RAGService:
                 "reranking_enabled": reranked,
                 "prompt_type": active_prompt_type,
                 "search_query": search_query,
+                "expanded_queries": extra_queries,
             }
         }
 
@@ -225,10 +241,12 @@ class RAGService:
         rerank: Optional[bool] = None,
         history: Optional[List[Dict[str, Any]]] = None,
         search_mode: Optional[str] = None,
+        query_expansion: Optional[str] = None,
     ) -> Iterator[Dict[str, Any]]:
         """Stream a RAG answer as events: ``sources`` first, then ``token``s, then ``done``."""
         history_text = self._history_text(history)
         search_query = self.condense_question(question, history_text)
+        extra_queries = self.expand_query(search_query, query_expansion)
         search_results, reranked = self.retrieve(
             search_query,
             top_k=top_k,
@@ -237,6 +255,7 @@ class RAGService:
             max_age_days=max_age_days,
             rerank=rerank,
             search_mode=search_mode,
+            extra_queries=extra_queries,
         )
         active_prompt_type = prompt_type or self.prompt_type
         prompt = self.build_prompt(question, search_results, active_prompt_type, history_text)
@@ -257,6 +276,7 @@ class RAGService:
                     "reranking_enabled": reranked,
                     "prompt_type": active_prompt_type,
                     "search_query": search_query,
+                    "expanded_queries": extra_queries,
                 },
             },
         }
@@ -264,6 +284,29 @@ class RAGService:
     def _history_text(self, history: Optional[List[Dict[str, Any]]]) -> str:
         max_messages, max_chars, _ = _history_settings()
         return format_history(history, max_messages, max_chars)
+
+    def expand_query(self, question: str, strategy: Optional[str]) -> List[str]:
+        """Extra search queries for ``multi_query`` (reformulations) or ``hyde``
+        (a hypothetical answer passage, which embeds closer to real answers than
+        a short question does). Returns [] for ``none`` or on LLM failure."""
+        strategy = (strategy or os.getenv("QUERY_EXPANSION", "none")).lower()
+        if strategy == "none":
+            return []
+        if strategy not in QUERY_EXPANSIONS:
+            raise ValueError(f"Unknown query expansion: {strategy}. Use one of {sorted(QUERY_EXPANSIONS)}")
+        try:
+            if strategy == "multi_query":
+                count = int(os.getenv("MULTI_QUERY_COUNT", "3"))
+                raw = self.llm_service.generate(
+                    MULTI_QUERY_TEMPLATE.format(count=count, question=question), temperature=0.7, max_tokens=512
+                )
+                queries = [line.strip(" -*0123456789.)\t") for line in raw.splitlines()]
+                return [q for q in queries if q and q.lower() != question.lower()][:count]
+            passage = self.llm_service.generate(HYDE_TEMPLATE.format(question=question), temperature=0.3, max_tokens=400)
+            return [passage.strip()] if passage.strip() else []
+        except Exception as e:
+            logger.warning(f"Query expansion ({strategy}) failed, searching the original question only: {e}")
+            return []
 
     def condense_question(self, question: str, history_text: str) -> str:
         """Rewrite a follow-up question into a standalone one, using the conversation."""
@@ -292,21 +335,34 @@ class RAGService:
         user_permissions: Optional[List[str]] = None,
         rerank: Optional[bool] = None,
         search_mode: Optional[str] = None,
+        extra_queries: Optional[List[str]] = None,
     ) -> tuple[List[Dict[str, Any]], bool]:
-        """Search the vector store, re-ranking when enabled. Returns (results, reranked)."""
+        """Search the vector store, re-ranking when enabled. Returns (results, reranked).
+
+        ``extra_queries`` (multi-query reformulations, HyDE passage) are searched
+        too and fused with the main query's results by Reciprocal Rank Fusion;
+        re-ranking always scores candidates against the original question.
+        """
         use_reranker = self.reranker is not None and (rerank is None or rerank)
         if rerank and self.reranker is None:
             logger.warning("Re-ranking requested but no reranker is available")
 
-        search_results = self.vector_store.similarity_search(
-            query=question,
-            # Fetch more candidates for re-ranking
-            k=max(self.rerank_top_k, top_k) if use_reranker else top_k,
-            filters=filters,
-            min_score=min_score,
-            max_age_days=max_age_days,
-            user_permissions=user_permissions,
-            mode=search_mode,
+        # Fetch more candidates for re-ranking
+        candidates = max(self.rerank_top_k, top_k) if use_reranker else top_k
+        result_lists = [
+            self.vector_store.similarity_search(
+                query=search_query,
+                k=candidates,
+                filters=filters,
+                min_score=min_score,
+                max_age_days=max_age_days,
+                user_permissions=user_permissions,
+                mode=search_mode,
+            )
+            for search_query in [question, *(extra_queries or [])]
+        ]
+        search_results = (
+            result_lists[0] if len(result_lists) == 1 else reciprocal_rank_fusion(result_lists, k=candidates)
         )
 
         if use_reranker and search_results:

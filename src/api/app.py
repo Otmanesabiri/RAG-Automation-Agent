@@ -11,6 +11,7 @@ from flask_cors import CORS
 
 from ..config import cors_origins, is_development, validate_settings
 from ..observability import configure_logging, get_logger, register_metrics
+from ..observability.tracing import configure_tracing
 from .dependencies import register_dependencies
 from .error_handlers import register_error_handlers
 from .routes import api_bp
@@ -51,6 +52,7 @@ def create_app(config: dict | None = None) -> Flask:
 
     # Register Prometheus metrics
     register_metrics(app)
+    configure_tracing(app)
 
     return app
 

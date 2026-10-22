@@ -6,7 +6,7 @@ import logging
 import os
 from typing import Any, Dict, Iterator, List, Optional
 
-from ..observability.metrics import record_citation_check
+from ..observability.metrics import record_answer, record_citation_check, stage_timer
 from ..retrieval.llm_judge import LLMCitationVerifier
 from ..vector_store.elasticsearch_store import ElasticsearchVectorStore, reciprocal_rank_fusion
 from .prompts import PromptBuilder, StrictRAGPrompt
@@ -195,11 +195,13 @@ class RAGService:
         prompt = self.build_prompt(question, search_results, active_prompt_type, history_text)
 
         # Generate answer using LLM
-        answer = self.llm_service.generate(
-            prompt,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        with stage_timer("generation"):
+            answer = self.llm_service.generate(
+                prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        record_answer(answer, len(search_results))
 
         response = {
             "answer": answer,
@@ -258,11 +260,13 @@ class RAGService:
         yield {"event": "sources", "data": self.format_sources(search_results)}
 
         parts: List[str] = []
-        for text in self.llm_service.stream_generate(prompt, temperature=temperature, max_tokens=max_tokens):
-            parts.append(text)
-            yield {"event": "token", "data": text}
+        with stage_timer("generation"):  # includes the time the client takes to consume tokens
+            for text in self.llm_service.stream_generate(prompt, temperature=temperature, max_tokens=max_tokens):
+                parts.append(text)
+                yield {"event": "token", "data": text}
 
         answer = "".join(parts)
+        record_answer(answer, len(search_results))
         done: Dict[str, Any] = {
             "answer": answer,
             "metadata": {
@@ -297,7 +301,8 @@ class RAGService:
         else:
             raise ValueError(f"Unknown citation check mode: {mode}")
         try:
-            check = verifier.verify(answer=answer, sources=search_results, check_claims=True)
+            with stage_timer("citation_check"):
+                check = verifier.verify(answer=answer, sources=search_results, check_claims=True)
         except Exception as e:
             logger.error(f"Citation verification ({mode}) failed: {e}")
             return None
@@ -323,15 +328,16 @@ class RAGService:
         if strategy not in QUERY_EXPANSIONS:
             raise ValueError(f"Unknown query expansion: {strategy}. Use one of {sorted(QUERY_EXPANSIONS)}")
         try:
-            if strategy == "multi_query":
-                count = int(os.getenv("MULTI_QUERY_COUNT", "3"))
-                raw = self.llm_service.generate(
-                    MULTI_QUERY_TEMPLATE.format(count=count, question=question), temperature=0.7, max_tokens=512
-                )
-                queries = [line.strip(" -*0123456789.)\t") for line in raw.splitlines()]
-                return [q for q in queries if q and q.lower() != question.lower()][:count]
-            passage = self.llm_service.generate(HYDE_TEMPLATE.format(question=question), temperature=0.3, max_tokens=400)
-            return [passage.strip()] if passage.strip() else []
+            with stage_timer("query_rewrite"):
+                if strategy == "multi_query":
+                    count = int(os.getenv("MULTI_QUERY_COUNT", "3"))
+                    raw = self.llm_service.generate(
+                        MULTI_QUERY_TEMPLATE.format(count=count, question=question), temperature=0.7, max_tokens=512
+                    )
+                    queries = [line.strip(" -*0123456789.)\t") for line in raw.splitlines()]
+                    return [q for q in queries if q and q.lower() != question.lower()][:count]
+                passage = self.llm_service.generate(HYDE_TEMPLATE.format(question=question), temperature=0.3, max_tokens=400)
+                return [passage.strip()] if passage.strip() else []
         except Exception as e:
             logger.warning(f"Query expansion ({strategy}) failed, searching the original question only: {e}")
             return []
@@ -342,11 +348,12 @@ class RAGService:
         if not history_text or not enabled:
             return question
         try:
-            standalone = self.llm_service.generate(
-                CONDENSE_QUESTION_TEMPLATE.format(history=history_text, question=question),
-                temperature=0.0,
-                max_tokens=256,
-            ).strip()
+            with stage_timer("query_rewrite"):
+                standalone = self.llm_service.generate(
+                    CONDENSE_QUESTION_TEMPLATE.format(history=history_text, question=question),
+                    temperature=0.0,
+                    max_tokens=256,
+                ).strip()
         except Exception as e:
             logger.warning(f"Question condensation failed, using the raw question: {e}")
             return question
@@ -377,23 +384,25 @@ class RAGService:
 
         # Fetch more candidates for re-ranking
         candidates = max(self.rerank_top_k, top_k) if use_reranker else top_k
-        result_lists = [
-            self.vector_store.similarity_search(
-                query=search_query,
-                k=candidates,
-                filters=filters,
-                min_score=min_score,
-                max_age_days=max_age_days,
-                user_permissions=user_permissions,
-                mode=search_mode,
-            )
-            for search_query in [question, *(extra_queries or [])]
-        ]
+        with stage_timer("retrieval"):
+            result_lists = [
+                self.vector_store.similarity_search(
+                    query=search_query,
+                    k=candidates,
+                    filters=filters,
+                    min_score=min_score,
+                    max_age_days=max_age_days,
+                    user_permissions=user_permissions,
+                    mode=search_mode,
+                )
+                for search_query in [question, *(extra_queries or [])]
+            ]
         search_results = result_lists[0] if len(result_lists) == 1 else reciprocal_rank_fusion(result_lists, k=candidates)
 
         if use_reranker and search_results:
             original_by_id = {doc["id"]: doc for doc in search_results}
-            ranked_docs = self.reranker.rerank(question, search_results, top_k=top_k)
+            with stage_timer("rerank"):
+                ranked_docs = self.reranker.rerank(question, search_results, top_k=top_k)
             search_results = [
                 {
                     "id": doc.document_id,

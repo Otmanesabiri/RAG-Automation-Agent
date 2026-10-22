@@ -9,6 +9,10 @@ from typing import Callable
 from flask import Flask, request
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
+from .logging import get_logger
+
+logger = get_logger(__name__)
+
 
 # Metrics definitions
 REQUEST_COUNT = Counter(
@@ -35,8 +39,17 @@ QUERY_COUNT = Counter(
 
 EMBEDDING_TOKENS = Counter(
     "rag_agent_embedding_tokens_total",
-    "Total tokens embedded",
+    "Approximate tokens embedded (characters / 4)",
 )
+
+
+def estimate_tokens(texts) -> int:
+    """Cheap provider-independent token estimate (~4 characters per token)."""
+    return sum(len(text) for text in texts) // 4
+
+
+def record_embedding_usage(texts) -> None:
+    EMBEDDING_TOKENS.inc(estimate_tokens(texts))
 
 
 def register_metrics(app: Flask) -> None:
@@ -74,14 +87,16 @@ def track_ingestion(func: Callable) -> Callable:
     @wraps(func)
     def wrapper(*args, **kwargs):
         result = func(*args, **kwargs)
-        # Assuming result is a Flask Response with JSON body
+        # Views return either a Response or a (Response, status) tuple.
+        response = result[0] if isinstance(result, tuple) else result
+        status = result[1] if isinstance(result, tuple) and len(result) > 1 else getattr(response, "status_code", 200)
         try:
-            if hasattr(result, "get_json"):
-                data = result.get_json()
+            if isinstance(status, int) and status < 300 and hasattr(response, "get_json"):
+                data = response.get_json(silent=True)
                 if data and "documents" in data:
                     INGESTION_COUNT.inc(len(data["documents"]))
-        except:
-            pass
+        except Exception as exc:  # metrics must never break the request
+            logger.warning(f"Failed to record ingestion metric: {exc}")
         return result
 
     return wrapper

@@ -58,12 +58,71 @@ class QueryRequest(BaseModel):
     prompt_type: Optional[PromptType] = None
     min_score: Optional[float] = Field(None, ge=0)
     max_age_days: Optional[int] = Field(None, ge=1)
+    search_mode: Optional[Literal["dense", "sparse", "hybrid"]] = Field(
+        None, description="kNN, BM25 or both fused with RRF; null uses SEARCH_MODE."
+    )
+    query_expansion: Optional[Literal["none", "multi_query", "hyde"]] = Field(
+        None, description="Extra LLM-generated search queries; null uses QUERY_EXPANSION."
+    )
+    verify_citations: Optional[Literal["off", "lexical", "llm"]] = Field(
+        None, description="Grade the answer against its sources; null uses CITATION_CHECK."
+    )
+
+
+class SearchRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=4000)
+    top_k: int = Field(5, ge=1, le=20)
+    filters: QueryFilters = Field(default_factory=QueryFilters)
+    search_mode: Optional[Literal["dense", "sparse", "hybrid"]] = None
+    rerank: Optional[bool] = None
+
+
+class WatchRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    query: str = Field(..., min_length=1, max_length=2000)
+    filters: Dict[str, Any] = Field(default_factory=dict)
+    min_score: Optional[float] = Field(None, ge=0)
+
+
+class ExtractRequest(BaseModel):
+    document_id: Optional[str] = None
+    text: Optional[str] = Field(None, max_length=200000)
+    json_schema: Dict[str, Any] = Field(..., alias="schema")
+    instructions: str = Field("", max_length=2000)
+
+    model_config = {"populate_by_name": True}
+
+    @model_validator(mode="after")
+    def check_source(self) -> "ExtractRequest":
+        if bool(self.document_id) == bool(self.text):
+            raise ValueError("Provide exactly one of document_id or text")
+        return self
+
+
+class DigestRequest(BaseModel):
+    since_hours: int = Field(24, ge=1, le=24 * 31)
+    notify: bool = True
+
+
+class FeedbackRequest(BaseModel):
+    rating: Literal["up", "down"]
+    session_id: Optional[str] = None
+    question: Optional[str] = Field(None, max_length=4000)
+    answer: Optional[str] = Field(None, max_length=20000)
+    comment: Optional[str] = Field(None, max_length=2000)
+
+
+class AgentRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=4000)
+    session_id: Optional[str] = None
+    max_iterations: Optional[int] = Field(None, ge=1, le=15)
 
 
 class QueryResponse(BaseModel):
     answer: str
     sources: List[Dict[str, Any]] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    citation_check: Optional[Dict[str, Any]] = None
 
 
 class SessionCreateRequest(BaseModel):

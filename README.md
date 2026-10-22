@@ -1,92 +1,91 @@
 # RAG Automation Agent
 
-The **RAG Automation Agent** is an enterprise-gra## 📚 Documentation & Design Artifacts
-- `docs/OBSERVABILITY.md` – Prometheus metrics, Loguru logging, Grafana dashboards.
-- `docs/architecture.md` – Vue d'architecture globale du système (à venir).
-- `docs/data-flow.md` – Pipeline d'ingestion, indexation et génération (à venir).
-- `docs/api.md` – Spécifications REST (à venir).
-- `docs/runbook.md` – Procédures d'exploitation et troubleshooting (à venir).atform that combines Retrieval-Augmented Generation (RAG) with autonomous tooling to streamline knowledge work across teams. It automates document ingestion, semantic search, and contextual reasoning to power copilots that answer questions, draft reports, and orchestrate multi-step enterprise workflows.
+A Retrieval-Augmented Generation service: it ingests documents (PDF, DOCX, TXT, Markdown, HTML, web pages), indexes them in Elasticsearch, and answers questions with an LLM (Gemini, Claude or OpenAI) grounded in the retrieved passages, with sources.
 
-## 🎯 Vision & Objectives
-- Deliver a plug-and-play framework for building secure enterprise copilots.
-- Support heterogeneous document sources (PDF, DOCX, HTML, TXT) with metadata-aware retrieval.
-- Provide observability, governance, and DevOps pipelines required for production deployments.
-- Offer an API-first design that integrates easily with existing business systems.
+## Capabilities
 
-## 🚀 Key Capabilities
-- **Dynamic ingestion pipeline** with modular loaders and intelligent chunking.
-- **Vector search powered by Elasticsearch** with pluggable similarity metrics.
-- **LLM Orchestration with LangChain**, configurable across OpenAI, Claude, or open-source models.
-- **Tool-augmented agent** capable of multi-step reasoning and external tool calls.
-- **REST API layer (Flask)** exposing ingestion, query, and health endpoints.
-- **Dockerized deployment** with CI/CD via GitHub Actions and full observability stack.
+- **Ingestion**: file upload (raw or base64) or URL, with SSRF protection; automatic or per-request chunk sizing; re-ingesting a source replaces it instead of duplicating it.
+- **Retrieval**: hybrid BM25 + kNN search fused with RRF, multi-query / HyDE expansion, metadata/age/permission filters, optional cross-encoder re-ranking, structure-aware chunking with section citations.
+- **Generation**: anti-hallucination prompt strategies, streamed answers (SSE), conversation memory with follow-up rewriting, LLM-judge citation checks.
+- **Agent**: `/agent` multi-step research with tools (Claude native tool use, JSON loop for other providers); MCP server for Claude Desktop / Claude Code.
+- **Sources & automations**: connectors (local folder, S3, Confluence) with incremental sync, background jobs, daily digests, topic watches with alerts, schema-based JSON extraction, signed incoming webhooks.
+- **API & security**: API keys or OIDC JWT, roles (reader/editor/admin), tenant isolation, audit log, rate limiting and sessions shared through Redis, chat UI at `/ui` with feedback.
+- **Quality**: reference dataset and nightly evaluation (hit rate, MRR, faithfulness), cost/latency/quality metrics and Grafana dashboard.
+- **Operations**: Prometheus metrics, Grafana dashboards, structured logging, Docker image, CI (tests, lint, security scans), Terraform for AWS staging.
 
-## 🧭 Initial Roadmap
-| Phase | Focus | Status |
-|-------|-------|--------|
-| 1 | Environment setup & architecture baseline | ✅ Complete |
-| 2 | Document ingestion & embeddings pipeline | ✅ Complete |
-| 3 | Elasticsearch configuration & indexing | ✅ Complete |
-| 4 | Retrieval-Augmented Generation flows | ✅ Complete |
-| 5 | Flask API layer & security | ✅ Complete |
-| 6 | Observability (metrics, logging, tracing) | ✅ Complete |
-| 7 | CI/CD pipelines & quality gates | ⏳ Planned |
-| 8 | Monitoring dashboards (Grafana) | ⏳ Planned |
-| 9 | Staging deployment & validation | ⏳ Planned |
-| 10 | Optimization, documentation, and production readiness | ⏳ Planned |
+## Quickstart
 
-## 🗂️ Repository Structure
+```bash
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+cp .env.example .env      # set LLM_PROVIDER + its API key, API_KEYS, ELASTICSEARCH_PASSWORD
+docker compose up -d elasticsearch redis
+python -m src.api.app     # http://localhost:8000
+```
+
+Full guide: [docs/QUICKSTART.md](docs/QUICKSTART.md) · API reference: [docs/api.md](docs/api.md)
+
+## Repository structure
+
 ```
 .
-├── configs/            # Configuration files (YAML/JSON) for pipelines and services
-├── data/               # Local staging area for raw documents (gitignored)
-├── docs/               # Architecture diagrams, API specs, operational runbooks
-├── src/                # Application source code (ingestion, retrievers, agents, API)
-├── tests/              # Unit and integration test suites (pytest)
-├── requirements.txt    # Python dependencies
-└── README.md           # Project overview (this document)
+├── src/
+│   ├── api/            # Flask app, routes, schemas, sessions
+│   ├── auth/           # API-key auth, rate limiting
+│   ├── ingestion/      # loaders, safe URL fetcher, chunking, pipeline
+│   ├── embeddings/     # sentence-transformers / OpenAI embeddings
+│   ├── vector_store/   # Elasticsearch store (bulk indexing, kNN, documents)
+│   ├── retrieval/      # re-ranker, citation verifier
+│   ├── llm/            # LLM providers, prompts, RAG orchestration
+│   └── observability/  # Prometheus metrics, logging
+├── tests/              # unit tests; tests/integration needs Elasticsearch
+├── configs/            # Elasticsearch index template, Prometheus, Grafana, Alertmanager
+├── scripts/            # index bootstrap; scripts/manual: checks needing real API keys
+├── terraform/aws/      # staging infrastructure
+├── docs/               # quickstart, API, architecture, observability, runbooks
+├── requirements.in     # direct dependencies (requirements.txt is the generated lock)
+└── docker-compose.yml  # Elasticsearch + Redis
 ```
 
-## 🧪 Target User Scenarios
-- **Enterprise knowledge bot** – “Quels sont les points clés du rapport financier Q2 2024 pour la région EMEA ?”
-- **Process automation assistant** – “Prépare un plan d’action basé sur les audits ISO 27001 des six derniers mois.”
-- **Compliance copilot** – “Quels documents mentionnent la politique de rétention des données et quelles exceptions existent ?”
-- **Customer support agent** – “Réponds à la demande du client concernant la procédure de remboursement premium.”
-- **Operations analyst** – “Résume les incidents critiques de la semaine dernière et propose des mesures d’atténuation.”
+## Roadmap
 
-## 🛠️ Quickstart (Local)
-1. **Créer un environnement virtuel**
-	```bash
-	python3 -m venv .venv
-	source .venv/bin/activate
-	pip install --upgrade pip
-	```
-2. **Installer les dépendances** (temporairement vide, sera enrichi)
-	```bash
-	pip install -r requirements.txt
-	```
-3. **Configurer les variables d’environnement**
-	- `OPENAI_API_KEY` ou équivalent pour le fournisseur LLM choisi.
-	- `ELASTICSEARCH_URL` pour la base vectorielle.
+Work is tracked in [GitHub issues](https://github.com/Otmanesabiri/RAG-Automation-Agent/issues); the overview is in [issue #27](https://github.com/Otmanesabiri/RAG-Automation-Agent/issues/27).
 
-4. **Lancer Elasticsearch en local**
-	```bash
-	docker compose up -d elasticsearch
-	python scripts/init_elasticsearch.py
-	```
-	Utilisez la variable `ELASTIC_PASSWORD` définie dans `.env` (par défaut `changeme`).
+| Priority | Theme | Status |
+|----------|-------|--------|
+| P0 | Security: secrets out of Git, auth/rate limit, SSRF, hardened config, current LLM models | Done (#1 still needs key rotation and history purge) |
+| P1 | Reliability: Redis state, bulk indexing, index bootstrap, API params, conversation memory, metrics, tests, pinned dependencies, docs | Done |
+| P2 | RAG quality: hybrid search, multi-query/HyDE, structural chunking, LLM citation check, automatic evaluation, business metrics | Done (#17 open for semantic chunking and PDF tables) |
+| P3 | Agent features: tool-calling agent, source connectors, multi-tenant RBAC, web UI, MCP server, automations | Done (#22 open for SharePoint and Google Drive) |
 
-## 📚 Documentation & Design Artifacts
-- `docs/architecture.md` – Vue d’architecture globale du système (à venir).
-- `docs/data-flow.md` – Pipeline d’ingestion, indexation et génération (à venir).
-- `docs/api.md` – Spécifications REST (à venir).
-- `docs/runbook.md` – Procédures d’exploitation et troubleshooting (à venir).
+Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
-## 🤝 Contribution & Governance
-- Configurer un dépôt GitHub et activer les protections de branches (`main`, `develop`).
-- Utiliser GitHub Projects ou Issues pour suivre l’avancement des phases.
-- Définir des revues de code obligatoires et automatiser les contrôles via GitHub Actions.
+## Documentation
 
-## 📬 Contact
-Pour toute question, ouvrez une issue ou contactez l’équipe .
-# RAG-Automation-Agent
+- [docs/QUICKSTART.md](docs/QUICKSTART.md): local setup, tests, troubleshooting
+- [docs/api.md](docs/api.md): endpoints, streaming, errors
+- [docs/MCP.md](docs/MCP.md): MCP server for Claude Desktop / Claude Code
+- [docs/architecture.md](docs/architecture.md) and [docs/architecture/](docs/architecture/): components and PlantUML diagrams
+- [docs/data-flow.md](docs/data-flow.md): ingestion and query flows
+- [docs/RAG_ENHANCEMENTS.md](docs/RAG_ENHANCEMENTS.md): re-ranking, prompts, filters, citation checks
+- [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md), [docs/SLO_RUNBOOKS.md](docs/SLO_RUNBOOKS.md): monitoring and runbooks
+- [docs/CICD.md](docs/CICD.md): pipelines
+- [docs/SECURITY_CLEANUP.md](docs/SECURITY_CLEANUP.md): secret rotation and history cleanup
+- [docs/history/](docs/history/): earlier phase reports
+
+## Target scenarios
+
+- **Enterprise knowledge bot**: « Quels sont les points clés du rapport financier Q2 2024 pour la région EMEA ? »
+- **Compliance copilot**: « Quels documents mentionnent la politique de rétention des données et quelles exceptions existent ? »
+- **Customer support agent**: « Réponds à la demande du client concernant la procédure de remboursement premium. »
+- **Operations analyst**: « Résume les incidents critiques de la semaine dernière et propose des mesures d'atténuation. »
+
+## Contributing
+
+1. Create a branch from `main` per issue, open a pull request referencing it (`Closes #N`).
+2. Run `pytest` and `pre-commit install` (gitleaks blocks committed secrets).
+3. CI must pass: tests (coverage ≥ 75%), lint, security scans, Docker build.
+
+## Contact
+
+Open an issue on the repository.

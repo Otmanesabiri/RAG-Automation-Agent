@@ -1,0 +1,90 @@
+{
+  "title": "RAG Quality & Cost",
+  "uid": "rag-quality-cost",
+  "tags": ["rag", "quality", "cost"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": {"from": "now-24h", "to": "now"},
+  "templating": {"list": []},
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "LLM spend (24h, USD)",
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+      "fieldConfig": {"defaults": {"unit": "currencyUSD", "decimals": 2}},
+      "targets": [{"refId": "A", "expr": "sum(increase(rag_agent_llm_cost_usd_total[24h]))"}]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Cost per answer (USD, 1h)",
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+      "fieldConfig": {"defaults": {"unit": "currencyUSD", "decimals": 4}},
+      "targets": [
+        {"refId": "A", "expr": "sum(increase(rag_agent_llm_cost_usd_total[1h])) / clamp_min(sum(increase(rag_agent_answers_total[1h])), 1)"}
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "\"No information\" answers (1h)",
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 1}},
+      "targets": [
+        {"refId": "A", "expr": "sum(increase(rag_agent_answers_total{outcome=\"no_information\"}[1h])) / clamp_min(sum(increase(rag_agent_answers_total[1h])), 1)"}
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Avg citation confidence (1h)",
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 1, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 0.7}, {"color": "green", "value": 0.85}]}}},
+      "targets": [
+        {"refId": "A", "expr": "sum(increase(rag_agent_citation_confidence_sum[1h])) / clamp_min(sum(increase(rag_agent_citation_confidence_count[1h])), 1)"}
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Stage latency p95",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 5},
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "targets": [
+        {"refId": "A", "legendFormat": "{{stage}}", "expr": "histogram_quantile(0.95, sum by (le, stage) (rate(rag_agent_stage_duration_seconds_bucket[5m])))"}
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "LLM tokens / min by model",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 5},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "targets": [
+        {"refId": "A", "legendFormat": "{{model}} {{kind}}", "expr": "sum by (model, kind) (rate(rag_agent_llm_tokens_total[5m])) * 60"}
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "LLM spend / hour by model (USD)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+      "fieldConfig": {"defaults": {"unit": "currencyUSD"}},
+      "targets": [
+        {"refId": "A", "legendFormat": "{{provider}} / {{model}}", "expr": "sum by (provider, model) (rate(rag_agent_llm_cost_usd_total[5m])) * 3600"}
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Sources per answer (median) and ungrounded answers",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
+      "targets": [
+        {"refId": "A", "legendFormat": "median sources", "expr": "histogram_quantile(0.5, sum by (le) (rate(rag_agent_sources_per_answer_bucket[15m])))"},
+        {"refId": "B", "legendFormat": "ungrounded / min ({{mode}})", "expr": "sum by (mode) (rate(rag_agent_ungrounded_answers_total[5m])) * 60"}
+      ]
+    }
+  ]
+}

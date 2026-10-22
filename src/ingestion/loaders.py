@@ -14,9 +14,12 @@ from urllib.parse import urlparse
 
 from langchain_core.documents import Document
 
+from ..observability.logging import get_logger
 from .config import LoaderConfig
 from .types import DocumentLike
 from .url_fetcher import SafeURLFetcher
+
+logger = get_logger(__name__)
 
 
 def _html_to_text(content: bytes) -> str:
@@ -25,6 +28,12 @@ def _html_to_text(content: bytes) -> str:
     soup = BeautifulSoup(content, "html.parser")
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
+    # Keep the heading structure as Markdown so the chunker can split on sections.
+    for level in range(1, 5):
+        for heading in soup.find_all(f"h{level}"):
+            text = heading.get_text(" ", strip=True)
+            if text:
+                heading.string = f"{'#' * level} {text}"
     return soup.get_text(separator="\n", strip=True)
 
 
@@ -36,6 +45,36 @@ class _HTMLLoader:
 
     def load(self) -> List[Document]:
         return [Document(page_content=_html_to_text(self.path.read_bytes()), metadata={})]
+
+
+class _TextLoader:
+    """Plain text / Markdown loader that does not depend on the platform encoding.
+
+    Tries UTF-8 (with or without BOM), then charset-normalizer's best guess, then
+    latin-1, which decodes any byte sequence.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def load(self) -> List[Document]:
+        return [Document(page_content=decode_text(self.path.read_bytes()), metadata={})]
+
+
+def decode_text(raw: bytes) -> str:
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        pass
+    try:
+        from charset_normalizer import from_bytes
+
+        best = from_bytes(raw).best()
+        if best is not None:
+            return str(best)
+    except ImportError:
+        pass
+    return raw.decode("latin-1")
 
 
 def _module_available(name: str) -> bool:
@@ -93,7 +132,9 @@ class DocumentLoaderFactory:
 
         loader = self._resolve_loader(resolved_path, mime_type)
         documents = loader.load()
-        self._merge_metadata(documents, metadata or {}, str(resolved_path))
+        if mime_type == "application/pdf":
+            documents = self._ocr_empty_pages(resolved_path, documents)
+        self._merge_metadata(documents, {"mime_type": mime_type, **(metadata or {})}, str(resolved_path))
         return LoadedDocumentBatch(documents=documents, source=str(resolved_path), mime_type=mime_type)
 
     def load_from_url(
@@ -122,7 +163,7 @@ class DocumentLoaderFactory:
                 filename += mimetypes.guess_extension(mime_type) or ".txt"
             documents = self.load_from_bytes(content=resource.content, filename=filename).documents
 
-        self._merge_metadata(documents, metadata or {}, url)
+        self._merge_metadata(documents, {"mime_type": mime_type, **(metadata or {})}, url)
         return LoadedDocumentBatch(documents=documents, source=url, mime_type=mime_type)
 
     def load_from_bytes(
@@ -149,6 +190,38 @@ class DocumentLoaderFactory:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+    def _ocr_empty_pages(self, path: Path, documents: List[DocumentLike]) -> List[DocumentLike]:
+        """Recover text of scanned PDF pages (no text layer) with Tesseract OCR.
+
+        Needs the optional extras (pytesseract, pdf2image) plus the tesseract and
+        poppler binaries. Without them, empty pages are flagged ``needs_ocr``.
+        """
+        empty = [doc for doc in documents if not doc.page_content.strip()]
+        if not empty:
+            return documents
+        if not (_module_available("pytesseract") and _module_available("pdf2image")):
+            for doc in empty:
+                doc.metadata["needs_ocr"] = True
+            logger.warning(f"{len(empty)} PDF page(s) without text in {path.name}; install OCR extras to index them")
+            return documents
+
+        import pytesseract
+        from pdf2image import convert_from_path
+
+        languages = os.getenv("OCR_LANGUAGES", "eng+fra")
+        for doc in empty:
+            page = doc.metadata.get("page", 0)
+            try:
+                images = convert_from_path(str(path), first_page=page + 1, last_page=page + 1)
+                doc.page_content = "\n".join(pytesseract.image_to_string(image, lang=languages) for image in images)
+                doc.metadata["ocr"] = True
+            except Exception as exc:  # one unreadable page must not fail the whole document
+                doc.metadata["needs_ocr"] = True
+                logger.warning(f"OCR failed for page {page + 1} of {path.name}: {exc}")
+        return documents
+
+    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
     def _resolve_loader(self, path: Path, mime_type: Optional[str]):
         suffix = path.suffix.lower()
         loaders_module = "langchain_community.document_loaders"
@@ -159,8 +232,7 @@ class DocumentLoaderFactory:
             loader_cls = self._load_loader_class(loaders_module, "Docx2txtLoader")
             return loader_cls(path)
         if suffix in {".txt", ".md"}:
-            loader_cls = self._load_loader_class(loaders_module, "TextLoader")
-            return loader_cls(path, autodetect_encoding=True)
+            return _TextLoader(path)
         if suffix in {".html", ".htm"}:
             return _HTMLLoader(path)
 
@@ -169,21 +241,17 @@ class DocumentLoaderFactory:
             loader_cls = self._load_loader_class(loaders_module, "UnstructuredFileLoader")
             return loader_cls(str(path))
 
-        raise UnsupportedDocumentTypeError(
-            f"Unsupported document type for path={path} mime_type={mime_type}"
-        )
+        raise UnsupportedDocumentTypeError(f"Unsupported document type for path={path} mime_type={mime_type}")
 
     def _ensure_allowed_type(self, mime_type: Optional[str]) -> None:
         if self.config.allowed_mime_types and mime_type:
             allowed = set(self.config.allowed_mime_types)
             if mime_type not in allowed:
-                raise UnsupportedDocumentTypeError(
-                    f"MIME type {mime_type} not in allowed list"
-                )
+                raise UnsupportedDocumentTypeError(f"MIME type {mime_type} not in allowed list")
 
     def _merge_metadata(
         self,
-    documents: Iterable[DocumentLike],
+        documents: Iterable[DocumentLike],
         metadata: Dict[str, str],
         source: str,
     ) -> None:
@@ -237,6 +305,5 @@ class DocumentLoaderFactory:
             return getattr(loaded_module, attribute)
         except (ImportError, AttributeError) as exc:  # pragma: no cover
             raise RuntimeError(
-                f"Failed to import {attribute} from {module}. "
-                "Ensure langchain-community and related extras are installed."
+                f"Failed to import {attribute} from {module}. " "Ensure langchain-community and related extras are installed."
             ) from exc

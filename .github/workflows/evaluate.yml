@@ -1,0 +1,72 @@
+name: RAG Evaluation
+
+on:
+  schedule:
+    # Nightly, 03:00 UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      search_mode:
+        description: Retrieval mode
+        type: choice
+        options: [hybrid, dense, sparse]
+        default: hybrid
+      generate:
+        description: Also generate and grade answers (uses the LLM API key secret)
+        type: boolean
+        default: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    services:
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:8.14.0
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: false
+          ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd "curl -f http://localhost:9200/_cluster/health || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: pip
+
+    - name: Cache embedding models
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/huggingface
+        key: hf-${{ runner.os }}-all-mpnet-base-v2
+
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+
+    - name: Run evaluation
+      env:
+        ELASTICSEARCH_URL: http://localhost:9200
+        EMBEDDING_PROVIDER: sentence-transformers
+        LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'gemini' }}
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: |
+        python scripts/evaluate.py \
+          --search-mode "${{ inputs.search_mode || 'hybrid' }}" \
+          ${{ inputs.generate && '--generate' || '' }}
+
+    - name: Upload report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: rag-eval-report
+        path: eval-report/

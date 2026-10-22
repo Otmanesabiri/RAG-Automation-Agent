@@ -6,15 +6,18 @@ import logging
 import os
 from typing import Any, Dict, Iterator, List, Optional
 
-from ..vector_store.elasticsearch_store import ElasticsearchVectorStore
-from .service import LLMService
+from ..observability.metrics import record_answer, record_citation_check, stage_timer
+from ..retrieval.llm_judge import LLMCitationVerifier
+from ..vector_store.elasticsearch_store import ElasticsearchVectorStore, reciprocal_rank_fusion
 from .prompts import PromptBuilder, StrictRAGPrompt
+from .service import LLMService
 
 logger = logging.getLogger(__name__)
 
 # Try to import optional enhancement features
 try:
     from ..retrieval.reranker import CrossEncoderReranker
+
     RERANKER_AVAILABLE = True
 except ImportError:
     RERANKER_AVAILABLE = False
@@ -22,6 +25,7 @@ except ImportError:
 
 try:
     from ..retrieval.citation_verifier import CitationVerifier
+
     CITATION_VERIFIER_AVAILABLE = True
 except ImportError:
     CITATION_VERIFIER_AVAILABLE = False
@@ -47,6 +51,18 @@ Conversation:
 Follow-up question: {question}
 
 Standalone question:"""
+
+
+QUERY_EXPANSIONS = {"none", "multi_query", "hyde"}
+CITATION_CHECK_MODES = {"off", "lexical", "llm"}
+
+MULTI_QUERY_TEMPLATE = """Write {count} different search queries that could retrieve documents answering the question below. Vary the wording and use synonyms. Keep the language of the question. One query per line, no numbering, no other text.
+
+Question: {question}"""
+
+HYDE_TEMPLATE = """Write a short factual passage (3-5 sentences) that would answer the question below, as it might appear in a reference document. Keep the language of the question. Write only the passage.
+
+Question: {question}"""
 
 
 def _history_settings() -> tuple[int, int, bool]:
@@ -93,6 +109,7 @@ class RAGService:
         enable_reranking: bool = True,
         enable_citation_check: bool = False,
         rerank_top_k: int = 10,
+        citation_check_mode: Optional[str] = None,
     ) -> None:
         self.vector_store = vector_store
         self.llm_service = llm_service
@@ -109,10 +126,13 @@ class RAGService:
             except Exception as e:
                 logger.warning(f"Failed to initialize reranker: {e}")
 
-        self.citation_verifier = None
-        if enable_citation_check and CITATION_VERIFIER_AVAILABLE:
-            self.citation_verifier = CitationVerifier()
-            logger.info("Citation verification enabled")
+        # off | lexical (fuzzy text matching) | llm (LLM judge, one extra call per answer)
+        default_mode = "lexical" if enable_citation_check else os.getenv("CITATION_CHECK", "off")
+        self.citation_check_mode = (citation_check_mode or default_mode).lower()
+        if self.citation_check_mode not in CITATION_CHECK_MODES:
+            raise ValueError(f"Unknown citation check mode: {self.citation_check_mode}")
+        if self.citation_check_mode != "off":
+            logger.info(f"Citation verification enabled ({self.citation_check_mode})")
 
     def query(
         self,
@@ -129,6 +149,9 @@ class RAGService:
         prompt_type: Optional[str] = None,
         rerank: Optional[bool] = None,
         history: Optional[List[Dict[str, Any]]] = None,
+        search_mode: Optional[str] = None,
+        query_expansion: Optional[str] = None,
+        verify_citations: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Execute enhanced RAG query with optional re-ranking and citation checking.
@@ -145,6 +168,9 @@ class RAGService:
             include_sources: Include source documents in response
             prompt_type: Override default prompt type (strict, citation, etc.)
             rerank: Force re-ranking on/off for this query (None = service default)
+            search_mode: dense, sparse or hybrid retrieval (None = SEARCH_MODE)
+            query_expansion: none, multi_query or hyde (None = QUERY_EXPANSION)
+            verify_citations: off, lexical or llm (None = CITATION_CHECK)
             history: Previous session messages ({role, content}); follow-up
                 questions are rewritten into standalone ones for retrieval
 
@@ -153,6 +179,7 @@ class RAGService:
         """
         history_text = self._history_text(history)
         search_query = self.condense_question(question, history_text)
+        extra_queries = self.expand_query(search_query, query_expansion)
         search_results, reranked = self.retrieve(
             search_query,
             top_k=top_k,
@@ -161,16 +188,20 @@ class RAGService:
             max_age_days=max_age_days,
             user_permissions=user_permissions,
             rerank=rerank,
+            search_mode=search_mode,
+            extra_queries=extra_queries,
         )
         active_prompt_type = prompt_type or self.prompt_type
         prompt = self.build_prompt(question, search_results, active_prompt_type, history_text)
 
         # Generate answer using LLM
-        answer = self.llm_service.generate(
-            prompt,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        with stage_timer("generation"):
+            answer = self.llm_service.generate(
+                prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        record_answer(answer, len(search_results))
 
         response = {
             "answer": answer,
@@ -180,28 +211,13 @@ class RAGService:
                 "reranking_enabled": reranked,
                 "prompt_type": active_prompt_type,
                 "search_query": search_query,
-            }
+                "expanded_queries": extra_queries,
+            },
         }
 
-        # Add citation verification if enabled
-        if self.citation_verifier and search_results:
-            try:
-                citation_check = self.citation_verifier.verify(
-                    answer=answer,
-                    sources=search_results,
-                    check_claims=True
-                )
-                response["citation_check"] = {
-                    "is_grounded": citation_check.is_grounded,
-                    "confidence": citation_check.confidence,
-                    "warnings": citation_check.warnings,
-                }
-                if not citation_check.is_grounded:
-                    logger.warning(
-                        f"Low citation confidence: {citation_check.confidence:.2%}"
-                    )
-            except Exception as e:
-                logger.error(f"Citation verification failed: {e}")
+        citation_check = self.check_citations(answer, search_results, verify_citations)
+        if citation_check:
+            response["citation_check"] = citation_check
 
         if include_sources:
             response["sources"] = self.format_sources(search_results)
@@ -216,49 +232,117 @@ class RAGService:
         filters: Optional[Dict[str, Any]] = None,
         min_score: Optional[float] = None,
         max_age_days: Optional[int] = None,
+        user_permissions: Optional[List[str]] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         prompt_type: Optional[str] = None,
         rerank: Optional[bool] = None,
         history: Optional[List[Dict[str, Any]]] = None,
+        search_mode: Optional[str] = None,
+        query_expansion: Optional[str] = None,
+        verify_citations: Optional[str] = None,
     ) -> Iterator[Dict[str, Any]]:
         """Stream a RAG answer as events: ``sources`` first, then ``token``s, then ``done``."""
         history_text = self._history_text(history)
         search_query = self.condense_question(question, history_text)
+        extra_queries = self.expand_query(search_query, query_expansion)
         search_results, reranked = self.retrieve(
             search_query,
             top_k=top_k,
             filters=filters,
             min_score=min_score,
             max_age_days=max_age_days,
+            user_permissions=user_permissions,
             rerank=rerank,
+            search_mode=search_mode,
+            extra_queries=extra_queries,
         )
         active_prompt_type = prompt_type or self.prompt_type
         prompt = self.build_prompt(question, search_results, active_prompt_type, history_text)
         yield {"event": "sources", "data": self.format_sources(search_results)}
 
         parts: List[str] = []
-        for text in self.llm_service.stream_generate(prompt, temperature=temperature, max_tokens=max_tokens):
-            parts.append(text)
-            yield {"event": "token", "data": text}
+        with stage_timer("generation"):  # includes the time the client takes to consume tokens
+            for text in self.llm_service.stream_generate(prompt, temperature=temperature, max_tokens=max_tokens):
+                parts.append(text)
+                yield {"event": "token", "data": text}
 
-        yield {
-            "event": "done",
-            "data": {
-                "answer": "".join(parts),
-                "metadata": {
-                    "top_k": top_k,
-                    "retrieved_docs": len(search_results),
-                    "reranking_enabled": reranked,
-                    "prompt_type": active_prompt_type,
-                    "search_query": search_query,
-                },
+        answer = "".join(parts)
+        record_answer(answer, len(search_results))
+        done: Dict[str, Any] = {
+            "answer": answer,
+            "metadata": {
+                "top_k": top_k,
+                "retrieved_docs": len(search_results),
+                "reranking_enabled": reranked,
+                "prompt_type": active_prompt_type,
+                "search_query": search_query,
+                "expanded_queries": extra_queries,
             },
         }
+        citation_check = self.check_citations(answer, search_results, verify_citations)
+        if citation_check:
+            done["citation_check"] = citation_check
+        yield {"event": "done", "data": done}
 
     def _history_text(self, history: Optional[List[Dict[str, Any]]]) -> str:
         max_messages, max_chars, _ = _history_settings()
         return format_history(history, max_messages, max_chars)
+
+    def check_citations(
+        self, answer: str, search_results: List[Dict[str, Any]], mode: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Grade how well the answer is grounded in the sources; None when disabled or failed."""
+        mode = (mode or getattr(self, "citation_check_mode", "off")).lower()
+        if mode == "off" or not search_results:
+            return None
+        if mode == "llm":
+            verifier = LLMCitationVerifier(self.llm_service)
+        elif mode == "lexical" and CITATION_VERIFIER_AVAILABLE:
+            verifier = CitationVerifier()
+        else:
+            raise ValueError(f"Unknown citation check mode: {mode}")
+        try:
+            with stage_timer("citation_check"):
+                check = verifier.verify(answer=answer, sources=search_results, check_claims=True)
+        except Exception as e:
+            logger.error(f"Citation verification ({mode}) failed: {e}")
+            return None
+
+        record_citation_check(check.confidence, check.is_grounded, mode)
+        if not check.is_grounded:
+            logger.warning(f"Low citation confidence: {check.confidence:.2%}")
+        return {
+            "mode": mode,
+            "is_grounded": check.is_grounded,
+            "confidence": check.confidence,
+            "ungrounded_claims": check.ungrounded_claims,
+            "warnings": check.warnings,
+        }
+
+    def expand_query(self, question: str, strategy: Optional[str]) -> List[str]:
+        """Extra search queries for ``multi_query`` (reformulations) or ``hyde``
+        (a hypothetical answer passage, which embeds closer to real answers than
+        a short question does). Returns [] for ``none`` or on LLM failure."""
+        strategy = (strategy or os.getenv("QUERY_EXPANSION", "none")).lower()
+        if strategy == "none":
+            return []
+        if strategy not in QUERY_EXPANSIONS:
+            raise ValueError(f"Unknown query expansion: {strategy}. Use one of {sorted(QUERY_EXPANSIONS)}")
+        try:
+            with stage_timer("query_rewrite"):
+                if strategy == "multi_query":
+                    count = int(os.getenv("MULTI_QUERY_COUNT", "3"))
+                    raw = self.llm_service.generate(
+                        MULTI_QUERY_TEMPLATE.format(count=count, question=question), temperature=0.7, max_tokens=512
+                    )
+                    queries = [line.strip(" -*0123456789.)\t") for line in raw.splitlines()]
+                    return [q for q in queries if q and q.lower() != question.lower()][:count]
+                passage = self.llm_service.generate(HYDE_TEMPLATE.format(question=question), temperature=0.3, max_tokens=400)
+                return [passage.strip()] if passage.strip() else []
+        except Exception as e:
+            logger.warning(f"Query expansion ({strategy}) failed, searching the original question only: {e}")
+            return []
 
     def condense_question(self, question: str, history_text: str) -> str:
         """Rewrite a follow-up question into a standalone one, using the conversation."""
@@ -266,11 +350,12 @@ class RAGService:
         if not history_text or not enabled:
             return question
         try:
-            standalone = self.llm_service.generate(
-                CONDENSE_QUESTION_TEMPLATE.format(history=history_text, question=question),
-                temperature=0.0,
-                max_tokens=256,
-            ).strip()
+            with stage_timer("query_rewrite"):
+                standalone = self.llm_service.generate(
+                    CONDENSE_QUESTION_TEMPLATE.format(history=history_text, question=question),
+                    temperature=0.0,
+                    max_tokens=256,
+                ).strip()
         except Exception as e:
             logger.warning(f"Question condensation failed, using the raw question: {e}")
             return question
@@ -286,25 +371,40 @@ class RAGService:
         max_age_days: Optional[int] = None,
         user_permissions: Optional[List[str]] = None,
         rerank: Optional[bool] = None,
+        search_mode: Optional[str] = None,
+        extra_queries: Optional[List[str]] = None,
     ) -> tuple[List[Dict[str, Any]], bool]:
-        """Search the vector store, re-ranking when enabled. Returns (results, reranked)."""
+        """Search the vector store, re-ranking when enabled. Returns (results, reranked).
+
+        ``extra_queries`` (multi-query reformulations, HyDE passage) are searched
+        too and fused with the main query's results by Reciprocal Rank Fusion;
+        re-ranking always scores candidates against the original question.
+        """
         use_reranker = self.reranker is not None and (rerank is None or rerank)
         if rerank and self.reranker is None:
             logger.warning("Re-ranking requested but no reranker is available")
 
-        search_results = self.vector_store.similarity_search(
-            query=question,
-            # Fetch more candidates for re-ranking
-            k=max(self.rerank_top_k, top_k) if use_reranker else top_k,
-            filters=filters,
-            min_score=min_score,
-            max_age_days=max_age_days,
-            user_permissions=user_permissions,
-        )
+        # Fetch more candidates for re-ranking
+        candidates = max(self.rerank_top_k, top_k) if use_reranker else top_k
+        with stage_timer("retrieval"):
+            result_lists = [
+                self.vector_store.similarity_search(
+                    query=search_query,
+                    k=candidates,
+                    filters=filters,
+                    min_score=min_score,
+                    max_age_days=max_age_days,
+                    user_permissions=user_permissions,
+                    mode=search_mode,
+                )
+                for search_query in [question, *(extra_queries or [])]
+            ]
+        search_results = result_lists[0] if len(result_lists) == 1 else reciprocal_rank_fusion(result_lists, k=candidates)
 
         if use_reranker and search_results:
             original_by_id = {doc["id"]: doc for doc in search_results}
-            ranked_docs = self.reranker.rerank(question, search_results, top_k=top_k)
+            with stage_timer("rerank"):
+                ranked_docs = self.reranker.rerank(question, search_results, top_k=top_k)
             search_results = [
                 {
                     "id": doc.document_id,
@@ -313,7 +413,7 @@ class RAGService:
                     "snippet": doc.snippet,
                     "source": doc.source,
                     "score": doc.rerank_score,
-                    "metadata": doc.metadata or {}
+                    "metadata": doc.metadata or {},
                 }
                 for doc in ranked_docs
             ]
@@ -332,12 +432,8 @@ class RAGService:
         if prompt_type != "default":
             try:
                 from .prompts import build_prompt
-                prompt = build_prompt(
-                    prompt_type=prompt_type,
-                    query=question,
-                    context=context,
-                    sources=search_results
-                )
+
+                prompt = build_prompt(prompt_type=prompt_type, query=question, context=context, sources=search_results)
             except Exception as e:
                 logger.warning(f"Failed to build custom prompt: {e}. Using default.")
         if prompt is None:

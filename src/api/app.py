@@ -10,10 +10,12 @@ from flask import Flask
 from flask_cors import CORS
 
 from ..config import cors_origins, is_development, validate_settings
+from ..observability import configure_logging, get_logger, register_metrics
+from ..observability.tracing import configure_tracing
+from .automation_routes import automation_bp
 from .dependencies import register_dependencies
 from .error_handlers import register_error_handlers
 from .routes import api_bp
-from ..observability import configure_logging, get_logger, register_metrics
 
 logger = get_logger(__name__)
 
@@ -45,12 +47,14 @@ def create_app(config: dict | None = None) -> Flask:
     register_dependencies(app)
     register_error_handlers(app)
     app.register_blueprint(api_bp)
+    app.register_blueprint(automation_bp)
 
     if not is_development() and not os.getenv("REDIS_URL"):
         logger.warning("REDIS_URL is not set: sessions and rate limits are per-worker and lost on restart")
 
     # Register Prometheus metrics
     register_metrics(app)
+    configure_tracing(app)
 
     return app
 

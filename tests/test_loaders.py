@@ -86,3 +86,15 @@ def test_unknown_format_without_unstructured_is_unsupported(loader_config, monke
     monkeypatch.setattr(loaders, "_module_available", lambda name: False)
     with pytest.raises(UnsupportedDocumentTypeError):
         DocumentLoaderFactory(loader_config).load_from_bytes(content=b"x", filename="data.xyz")
+
+
+def test_utf8_text_keeps_accents(loader_config):
+    batch = DocumentLoaderFactory(loader_config).load_from_bytes(
+        content="Politique de sécurité : délai de 72 heures".encode("utf-8"), filename="fr.txt"
+    )
+    assert batch.documents[0].page_content == "Politique de sécurité : délai de 72 heures"
+
+
+def test_latin1_text_is_still_decoded(loader_config):
+    batch = DocumentLoaderFactory(loader_config).load_from_bytes(content="déjà vu".encode("latin-1"), filename="old.txt")
+    assert "vu" in batch.documents[0].page_content

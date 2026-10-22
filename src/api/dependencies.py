@@ -59,7 +59,10 @@ def _build_embedding_service() -> EmbeddingService:
 def _build_vector_store() -> ElasticsearchVectorStore:
     embedding_service = _build_embedding_service()
     index_name = os.getenv("ELASTICSEARCH_INDEX", "rag_documents")
-    return ElasticsearchVectorStore(index_name=index_name, embedding_service=embedding_service)
+    store = ElasticsearchVectorStore(index_name=index_name, embedding_service=embedding_service)
+    if os.getenv("ELASTICSEARCH_AUTO_CREATE_INDEX", "true").lower() == "true":
+        store.ensure_index()
+    return store
 
 
 def get_embedding_service() -> EmbeddingService:

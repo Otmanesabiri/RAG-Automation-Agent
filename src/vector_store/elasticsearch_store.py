@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from collections import defaultdict
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from elasticsearch import Elasticsearch, helpers
@@ -13,6 +15,12 @@ from elasticsearch import Elasticsearch, helpers
 from ..embeddings.service import EmbeddingService
 from ..ingestion.types import DocumentLike
 from .client import create_es_client
+
+INDEX_TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "configs" / "elasticsearch_index.json"
+
+
+class IndexDimensionMismatchError(RuntimeError):
+    """Raised when the index was built for a different embedding model."""
 
 
 class ElasticsearchVectorStore:
@@ -35,6 +43,32 @@ class ElasticsearchVectorStore:
         # "wait_for" makes new chunks searchable before the request returns
         # without forcing an expensive refresh; "false" for bulk backfills.
         self.refresh = refresh or os.getenv("INDEX_REFRESH", "wait_for")
+
+    def ensure_index(self) -> bool:
+        """Create the index if missing, sized for the configured embedding model.
+
+        Returns True when the index was created. Raises
+        :class:`IndexDimensionMismatchError` when an existing index was built
+        for vectors of another size (i.e. another embedding model).
+        """
+        dims = self.embedding_service.dimension
+        model = self.embedding_service.model_name
+        if self.client.indices.exists(index=self.index_name):
+            mapping = self.client.indices.get_mapping(index=self.index_name)
+            properties = mapping[self.index_name]["mappings"].get("properties", {})
+            existing = properties.get("embedding", {}).get("dims")
+            if existing is not None and existing != dims:
+                raise IndexDimensionMismatchError(
+                    f"Index '{self.index_name}' stores {existing}-dim vectors but the embedding model "
+                    f"'{model}' produces {dims}. Use another ELASTICSEARCH_INDEX or re-create the index."
+                )
+            return False
+
+        body = json.loads(INDEX_TEMPLATE_PATH.read_text(encoding="utf-8"))
+        body["mappings"]["properties"]["embedding"]["dims"] = dims
+        body["mappings"]["_meta"] = {"embedding_model": model, "embedding_dims": dims}
+        self.client.indices.create(index=self.index_name, **body)
+        return True
 
     @staticmethod
     def document_id_for(source: str) -> str:

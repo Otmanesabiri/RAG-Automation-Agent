@@ -487,6 +487,7 @@ class _ValidationException(Exception):
         self.status_code = status_code
 
 
-@api_bp.errorhandler(_ValidationException)
+# App-wide, so every blueprint using _parse_payload gets JSON 4xx responses
+@api_bp.app_errorhandler(_ValidationException)
 def handle_validation_exception(error: _ValidationException):  # pragma: no cover - blueprint scoped handler
     return error.response, error.status_code

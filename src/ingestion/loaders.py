@@ -47,6 +47,36 @@ class _HTMLLoader:
         return [Document(page_content=_html_to_text(self.path.read_bytes()), metadata={})]
 
 
+class _TextLoader:
+    """Plain text / Markdown loader that does not depend on the platform encoding.
+
+    Tries UTF-8 (with or without BOM), then charset-normalizer's best guess, then
+    latin-1, which decodes any byte sequence.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def load(self) -> List[Document]:
+        return [Document(page_content=decode_text(self.path.read_bytes()), metadata={})]
+
+
+def decode_text(raw: bytes) -> str:
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        pass
+    try:
+        from charset_normalizer import from_bytes
+
+        best = from_bytes(raw).best()
+        if best is not None:
+            return str(best)
+    except ImportError:
+        pass
+    return raw.decode("latin-1")
+
+
 def _module_available(name: str) -> bool:
     from importlib.util import find_spec
 
@@ -202,8 +232,7 @@ class DocumentLoaderFactory:
             loader_cls = self._load_loader_class(loaders_module, "Docx2txtLoader")
             return loader_cls(path)
         if suffix in {".txt", ".md"}:
-            loader_cls = self._load_loader_class(loaders_module, "TextLoader")
-            return loader_cls(path, autodetect_encoding=True)
+            return _TextLoader(path)
         if suffix in {".html", ".htm"}:
             return _HTMLLoader(path)
 

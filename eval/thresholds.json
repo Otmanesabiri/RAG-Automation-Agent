@@ -1,0 +1,7 @@
+{
+  "hit_rate": 0.9,
+  "mrr": 0.8,
+  "source_recall": 0.95,
+  "answer_correctness": 0.7,
+  "faithfulness": 0.7
+}

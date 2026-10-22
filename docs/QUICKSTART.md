@@ -85,6 +85,15 @@ pytest -m integration      # needs Elasticsearch at ELASTICSEARCH_URL
 pytest --cov=src           # coverage (CI requires >= 75%)
 ```
 
+## Quality evaluation
+
+`scripts/evaluate.py` indexes `test_docs/` and `eval/corpus/` into a temporary index, runs the questions of `eval/dataset.jsonl` and reports retrieval metrics (hit rate, MRR, source recall), plus answer correctness and faithfulness with `--generate`. It exits with status 1 below `eval/thresholds.json`. It runs nightly in the *RAG Evaluation* workflow.
+
+```bash
+python scripts/evaluate.py --search-mode hybrid
+python scripts/evaluate.py --embeddings hash   # quick smoke run, no model download
+```
+
 ## Monitoring (optional)
 
 ```bash

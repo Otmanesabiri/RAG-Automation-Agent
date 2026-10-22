@@ -77,9 +77,7 @@ def test_allowlist_restricts_domains():
 
 
 def test_redirect_to_internal_address_is_blocked():
-    session = _Session(
-        {"https://example.com/a": _Response(302, {"Location": "http://169.254.169.254/latest"})}
-    )
+    session = _Session({"https://example.com/a": _Response(302, {"Location": "http://169.254.169.254/latest"})})
     resolver = _resolver({**PUBLIC, "169.254.169.254": ["169.254.169.254"]})
     fetcher = SafeURLFetcher(allowed_domains=[], resolver=resolver, session=session)
     with pytest.raises(UnsafeURLError):

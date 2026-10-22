@@ -253,9 +253,7 @@ class ElasticsearchVectorStore:
 
         # Build combined filters
         combined_filters = self._build_advanced_filters(
-            filters=filters,
-            max_age_days=max_age_days,
-            user_permissions=user_permissions
+            filters=filters, max_age_days=max_age_days, user_permissions=user_permissions
         )
 
         if mode == "dense":
@@ -335,7 +333,7 @@ class ElasticsearchVectorStore:
         for key, value in filters.items():
             must_clauses.append({"term": {f"metadata.{key}": value}})
         return {"bool": {"must": must_clauses}} if must_clauses else {}
-    
+
     def _build_advanced_filters(
         self,
         filters: Optional[Dict[str, Any]] = None,
@@ -344,17 +342,17 @@ class ElasticsearchVectorStore:
     ) -> Optional[Dict[str, Any]]:
         """
         Build advanced Elasticsearch filters.
-        
+
         Args:
             filters: Custom metadata filters
             max_age_days: Maximum document age in days
             user_permissions: List of access levels user has
-        
+
         Returns:
             Elasticsearch query DSL filter or None
         """
         must_clauses = []
-        
+
         # Add custom metadata filters
         if filters:
             for key, value in filters.items():
@@ -364,35 +362,32 @@ class ElasticsearchVectorStore:
                 else:
                     # Single value = exact match
                     must_clauses.append({"term": {f"metadata.{key}": value}})
-        
+
         # Add age filter (documents newer than max_age_days)
         if max_age_days is not None:
             from datetime import datetime, timedelta
+
             cutoff_date = (datetime.utcnow() - timedelta(days=max_age_days)).isoformat()
-            must_clauses.append({
-                "range": {
-                    "created_at": {
-                        "gte": cutoff_date
-                    }
-                }
-            })
-        
+            must_clauses.append({"range": {"created_at": {"gte": cutoff_date}}})
+
         # Add permission filter (user can only see docs with their access levels)
         if user_permissions is not None:
             # If metadata.access_level exists, it must be in user_permissions
             # If metadata.access_level doesn't exist, document is public (accessible to all)
-            must_clauses.append({
-                "bool": {
-                    "should": [
-                        # Document has no access_level = public
-                        {"bool": {"must_not": {"exists": {"field": "metadata.access_level"}}}},
-                        # Document access_level matches user permissions
-                        {"terms": {"metadata.access_level": user_permissions}}
-                    ],
-                    "minimum_should_match": 1
+            must_clauses.append(
+                {
+                    "bool": {
+                        "should": [
+                            # Document has no access_level = public
+                            {"bool": {"must_not": {"exists": {"field": "metadata.access_level"}}}},
+                            # Document access_level matches user permissions
+                            {"terms": {"metadata.access_level": user_permissions}},
+                        ],
+                        "minimum_should_match": 1,
+                    }
                 }
-            })
-        
+            )
+
         # Return combined filter
         if must_clauses:
             return {"bool": {"must": must_clauses}}

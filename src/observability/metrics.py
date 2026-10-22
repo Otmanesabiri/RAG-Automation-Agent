@@ -7,7 +7,7 @@ from functools import wraps
 from typing import Callable
 
 from flask import Flask, request
-from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 
 from .logging import get_logger
 

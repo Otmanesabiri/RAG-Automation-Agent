@@ -132,7 +132,7 @@ class RedisSessionStore:
         for key in self.client.scan_iter(match=f"{self.prefix}*"):
             key = _text(key)
             if not key.endswith(":messages"):
-                sessions.append(key[len(self.prefix):])
+                sessions.append(key[len(self.prefix) :])
         return sessions
 
     def append_message(self, session_id: str, role: str, content: str) -> None:

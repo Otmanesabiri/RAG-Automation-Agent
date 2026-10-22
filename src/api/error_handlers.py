@@ -6,11 +6,10 @@ from flask import Blueprint, jsonify
 from werkzeug.exceptions import HTTPException
 
 from ..ingestion.loaders import UnsupportedDocumentTypeError
-from ..observability import get_logger
 from ..ingestion.url_fetcher import UnsafeURLError
 from ..llm.service import LLMRefusalError
+from ..observability import get_logger
 from .schemas import ErrorResponse
-
 
 logger = get_logger(__name__)
 

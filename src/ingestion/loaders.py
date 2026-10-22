@@ -169,21 +169,17 @@ class DocumentLoaderFactory:
             loader_cls = self._load_loader_class(loaders_module, "UnstructuredFileLoader")
             return loader_cls(str(path))
 
-        raise UnsupportedDocumentTypeError(
-            f"Unsupported document type for path={path} mime_type={mime_type}"
-        )
+        raise UnsupportedDocumentTypeError(f"Unsupported document type for path={path} mime_type={mime_type}")
 
     def _ensure_allowed_type(self, mime_type: Optional[str]) -> None:
         if self.config.allowed_mime_types and mime_type:
             allowed = set(self.config.allowed_mime_types)
             if mime_type not in allowed:
-                raise UnsupportedDocumentTypeError(
-                    f"MIME type {mime_type} not in allowed list"
-                )
+                raise UnsupportedDocumentTypeError(f"MIME type {mime_type} not in allowed list")
 
     def _merge_metadata(
         self,
-    documents: Iterable[DocumentLike],
+        documents: Iterable[DocumentLike],
         metadata: Dict[str, str],
         source: str,
     ) -> None:
@@ -237,6 +233,5 @@ class DocumentLoaderFactory:
             return getattr(loaded_module, attribute)
         except (ImportError, AttributeError) as exc:  # pragma: no cover
             raise RuntimeError(
-                f"Failed to import {attribute} from {module}. "
-                "Ensure langchain-community and related extras are installed."
+                f"Failed to import {attribute} from {module}. " "Ensure langchain-community and related extras are installed."
             ) from exc

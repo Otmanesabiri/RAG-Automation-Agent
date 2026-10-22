@@ -76,14 +76,23 @@ class _Store:
 
     def similarity_search(self, query, k, **kwargs):
         self.k = k
-        return [{"id": f"c{i}", "document_id": "d", "content": f"text {i}", "source": "s", "score": 1.0 - i / 10} for i in range(k)]
+        return [
+            {"id": f"c{i}", "document_id": "d", "content": f"text {i}", "source": "s", "score": 1.0 - i / 10} for i in range(k)
+        ]
 
 
 class _Reranker:
     def rerank(self, question, docs, top_k):
         ranked = list(reversed(docs))[:top_k]
         return [
-            SimpleNamespace(document_id=d["id"], content=d["content"], snippet=d["content"], source=d["source"], rerank_score=9.0, metadata={})
+            SimpleNamespace(
+                document_id=d["id"],
+                content=d["content"],
+                snippet=d["content"],
+                source=d["source"],
+                rerank_score=9.0,
+                metadata={},
+            )
             for d in ranked
         ]
 

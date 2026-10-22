@@ -54,13 +54,14 @@ def store():
 
 def _chunks(source, texts, **metadata):
     return [
-        SimpleNamespace(page_content=t, metadata={"source": source, "chunk_index": i, **metadata})
-        for i, t in enumerate(texts)
+        SimpleNamespace(page_content=t, metadata={"source": source, "chunk_index": i, **metadata}) for i, t in enumerate(texts)
     ]
 
 
 def test_index_search_and_document_lifecycle(store):
-    store.add_documents(_chunks("geo.txt", ["paris is the capital of france", "berlin is the capital of germany"], category="geo"))
+    store.add_documents(
+        _chunks("geo.txt", ["paris is the capital of france", "berlin is the capital of germany"], category="geo")
+    )
     store.add_documents(_chunks("ml.txt", ["machine learning trains models on data"], category="ml"))
 
     results = store.similarity_search("capital of france", k=1)

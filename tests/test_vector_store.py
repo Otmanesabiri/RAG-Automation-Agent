@@ -83,7 +83,9 @@ def test_list_documents_paginates(store):
                     {
                         "key": {"document_id": "d1"},
                         "doc_count": 3,
-                        "sample": {"hits": {"hits": [{"_source": {"source": "a.txt", "metadata": {"mime_type": "text/plain"}}}]}},
+                        "sample": {
+                            "hits": {"hits": [{"_source": {"source": "a.txt", "metadata": {"mime_type": "text/plain"}}}]}
+                        },
                         "last_indexed": {"value_as_string": "2026-01-01T00:00:00Z"},
                     }
                 ],
@@ -120,6 +122,7 @@ def test_document_endpoints(client, auth_headers):
 def test_document_endpoints_require_auth(client):
     assert client.get("/documents").status_code == 401
     assert client.delete("/documents/x").status_code == 401
+
 
 class _DimEmbeddings(_Embeddings):
     def __init__(self, dims, name="model-x"):

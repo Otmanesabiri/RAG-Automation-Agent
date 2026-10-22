@@ -7,14 +7,15 @@ import os
 from typing import Any, Dict, Iterator, List, Optional
 
 from ..vector_store.elasticsearch_store import ElasticsearchVectorStore, reciprocal_rank_fusion
-from .service import LLMService
 from .prompts import PromptBuilder, StrictRAGPrompt
+from .service import LLMService
 
 logger = logging.getLogger(__name__)
 
 # Try to import optional enhancement features
 try:
     from ..retrieval.reranker import CrossEncoderReranker
+
     RERANKER_AVAILABLE = True
 except ImportError:
     RERANKER_AVAILABLE = False
@@ -22,6 +23,7 @@ except ImportError:
 
 try:
     from ..retrieval.citation_verifier import CitationVerifier
+
     CITATION_VERIFIER_AVAILABLE = True
 except ImportError:
     CITATION_VERIFIER_AVAILABLE = False
@@ -199,26 +201,20 @@ class RAGService:
                 "prompt_type": active_prompt_type,
                 "search_query": search_query,
                 "expanded_queries": extra_queries,
-            }
+            },
         }
 
         # Add citation verification if enabled
         if self.citation_verifier and search_results:
             try:
-                citation_check = self.citation_verifier.verify(
-                    answer=answer,
-                    sources=search_results,
-                    check_claims=True
-                )
+                citation_check = self.citation_verifier.verify(answer=answer, sources=search_results, check_claims=True)
                 response["citation_check"] = {
                     "is_grounded": citation_check.is_grounded,
                     "confidence": citation_check.confidence,
                     "warnings": citation_check.warnings,
                 }
                 if not citation_check.is_grounded:
-                    logger.warning(
-                        f"Low citation confidence: {citation_check.confidence:.2%}"
-                    )
+                    logger.warning(f"Low citation confidence: {citation_check.confidence:.2%}")
             except Exception as e:
                 logger.error(f"Citation verification failed: {e}")
 
@@ -361,9 +357,7 @@ class RAGService:
             )
             for search_query in [question, *(extra_queries or [])]
         ]
-        search_results = (
-            result_lists[0] if len(result_lists) == 1 else reciprocal_rank_fusion(result_lists, k=candidates)
-        )
+        search_results = result_lists[0] if len(result_lists) == 1 else reciprocal_rank_fusion(result_lists, k=candidates)
 
         if use_reranker and search_results:
             original_by_id = {doc["id"]: doc for doc in search_results}
@@ -376,7 +370,7 @@ class RAGService:
                     "snippet": doc.snippet,
                     "source": doc.source,
                     "score": doc.rerank_score,
-                    "metadata": doc.metadata or {}
+                    "metadata": doc.metadata or {},
                 }
                 for doc in ranked_docs
             ]
@@ -395,12 +389,8 @@ class RAGService:
         if prompt_type != "default":
             try:
                 from .prompts import build_prompt
-                prompt = build_prompt(
-                    prompt_type=prompt_type,
-                    query=question,
-                    context=context,
-                    sources=search_results
-                )
+
+                prompt = build_prompt(prompt_type=prompt_type, query=question, context=context, sources=search_results)
             except Exception as e:
                 logger.warning(f"Failed to build custom prompt: {e}. Using default.")
         if prompt is None:

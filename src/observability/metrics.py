@@ -43,6 +43,26 @@ EMBEDDING_TOKENS = Counter(
 )
 
 
+CITATION_CONFIDENCE = Histogram(
+    "rag_agent_citation_confidence",
+    "Share of answer claims supported by the sources (citation check)",
+    ["mode"],
+    buckets=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+)
+
+UNGROUNDED_ANSWERS = Counter(
+    "rag_agent_ungrounded_answers_total",
+    "Answers whose citation check found them insufficiently grounded",
+    ["mode"],
+)
+
+
+def record_citation_check(confidence: float, is_grounded: bool, mode: str) -> None:
+    CITATION_CONFIDENCE.labels(mode=mode).observe(confidence)
+    if not is_grounded:
+        UNGROUNDED_ANSWERS.labels(mode=mode).inc()
+
+
 def estimate_tokens(texts) -> int:
     """Cheap provider-independent token estimate (~4 characters per token)."""
     return sum(len(text) for text in texts) // 4

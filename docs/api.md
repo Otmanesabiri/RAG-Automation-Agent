@@ -54,12 +54,14 @@ REST endpoints of the Flask interface. Every endpoint except `/health` and `/met
     "max_age_days": 365,
     "search_mode": "hybrid",
     "query_expansion": "multi_query",
+    "verify_citations": "llm",
     "stream": false
   }
   ```
   - `rerank`: force cross-encoder re-ranking on/off; omit for the server default.
   - `search_mode`: `dense` (kNN), `sparse` (BM25) or `hybrid` (both, fused with Reciprocal Rank Fusion); omit for `SEARCH_MODE` (default `hybrid`). `min_score` only applies to the dense part.
   - `query_expansion`: `none`, `multi_query` (the LLM writes reformulations, all searched and fused) or `hyde` (the LLM writes a hypothetical answer passage that is searched too). Each adds one LLM call; `metadata.expanded_queries` lists the extra queries.
+  - `verify_citations`: `off`, `lexical` (fuzzy text matching) or `llm` (an LLM judge checks each claim against the sources). When enabled, the response has a `citation_check` object: `mode`, `is_grounded`, `confidence` (share of supported claims), `ungrounded_claims`, `warnings`. Omit for `CITATION_CHECK`.
   - `prompt_type`: `default`, `strict`, `citation`, `contradiction`, `confidence`, `structured`.
   - `session_id`: must belong to the caller; omit to start a new session.
 - **Response**:

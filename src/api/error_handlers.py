@@ -5,6 +5,8 @@ from __future__ import annotations
 from flask import Blueprint, jsonify
 from werkzeug.exceptions import HTTPException
 
+from ..ingestion.loaders import UnsupportedDocumentTypeError
+from ..ingestion.url_fetcher import UnsafeURLError
 from .schemas import ErrorResponse
 
 
@@ -17,6 +19,16 @@ def register_error_handlers(app) -> None:
             details=[{"status_code": error.code}],
         )
         return jsonify({"error": response.model_dump()}), error.code
+
+    @app.errorhandler(UnsafeURLError)
+    def handle_unsafe_url(error: UnsafeURLError):
+        response = ErrorResponse(code="unsafe_url", message=str(error))
+        return jsonify({"error": response.model_dump()}), 400
+
+    @app.errorhandler(UnsupportedDocumentTypeError)
+    def handle_unsupported_document(error: UnsupportedDocumentTypeError):
+        response = ErrorResponse(code="unsupported_document_type", message=str(error))
+        return jsonify({"error": response.model_dump()}), 415
 
     @app.errorhandler(422)
     def handle_unprocessable(error):  # pragma: no cover - handled similarly to HTTPException

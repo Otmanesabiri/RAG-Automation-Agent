@@ -281,3 +281,13 @@ Si vous avez des questions :
 **Date de création** : 30 Octobre 2025  
 **Auteur** : RAG Automation Team  
 **Priorité** : 🚨 CRITIQUE - Sécurité
+
+## 🔁 Pre-commit (gitleaks)
+
+Le dépôt fournit `.pre-commit-config.yaml` (gitleaks + détection de clés privées) :
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+

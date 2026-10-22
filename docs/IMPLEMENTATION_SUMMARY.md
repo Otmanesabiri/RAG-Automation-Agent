@@ -122,7 +122,7 @@ Résoudre les **7 inconvénients majeurs** des systèmes RAG identifiés :
 
 ## 🧪 Tests
 
-**Fichier** : `test_rag_enhancements.py` (252 lignes)
+**Fichier** : `scripts/manual/demo_rag_enhancements.py` (252 lignes)
 
 **Résultats** :
 ```
@@ -211,7 +211,7 @@ response = rag_service.query(
 1. ✅ `src/retrieval/reranker.py` - Cross-encoder re-ranking
 2. ✅ `src/retrieval/citation_verifier.py` - Citation verification
 3. ✅ `src/llm/prompts.py` - Enhanced prompt templates
-4. ✅ `test_rag_enhancements.py` - Comprehensive test suite
+4. ✅ `scripts/manual/demo_rag_enhancements.py` - Comprehensive test suite
 5. ✅ `docs/RAG_ENHANCEMENTS.md` - Complete documentation
 
 **Fichiers modifiés** (2) :

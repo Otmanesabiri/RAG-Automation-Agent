@@ -8,7 +8,7 @@ from typing import Any, Dict
 from flask import Blueprint, Response, current_app, jsonify, request
 from pydantic import ValidationError
 
-from ..auth import rate_limit, require_api_key
+from ..auth import current_client_id, rate_limit, require_api_key
 from ..observability import get_logger, track_ingestion, track_query
 from .dependencies import get_ingestion_pipeline, get_rag_service, get_session_store, get_vector_store
 from .schemas import (
@@ -37,8 +37,8 @@ def health() -> Response:
 
 
 @api_bp.route("/ingest", methods=["POST"])
-@rate_limit
 @require_api_key
+@rate_limit
 @track_ingestion
 def ingest_documents() -> Response:
     payload = _parse_payload(IngestRequest)
@@ -77,15 +77,21 @@ def ingest_documents() -> Response:
 
 
 @api_bp.route("/query", methods=["POST"])
-@rate_limit
 @require_api_key
+@rate_limit
 @track_query
 def query_documents() -> Response:
     payload = _parse_payload(QueryRequest)
     session_store = get_session_store()
     rag_service = get_rag_service()
-    
-    session_id = payload.session_id or session_store.create_session(user_id=None)
+    owner = current_client_id()
+
+    if payload.session_id:
+        if not session_store.get_session(payload.session_id, owner=owner):
+            return _session_not_found(payload.session_id)
+        session_id = payload.session_id
+    else:
+        session_id = session_store.create_session(user_id=None, owner=owner)
     session_store.append_message(session_id, "user", payload.query)
 
     logger.info(f"Executing RAG query: {payload.query[:100]}... (session={session_id})")
@@ -113,11 +119,14 @@ def query_documents() -> Response:
 
 
 @api_bp.route("/sessions", methods=["POST"])
+@require_api_key
+@rate_limit
 def create_session() -> Response:
     payload = _parse_payload(SessionCreateRequest)
     store = get_session_store()
-    session_id = store.create_session(user_id=payload.user_id, metadata=payload.metadata)
-    session = store.get_session(session_id)
+    owner = current_client_id()
+    session_id = store.create_session(user_id=payload.user_id, metadata=payload.metadata, owner=owner)
+    session = store.get_session(session_id, owner=owner)
     response = SessionResponse(
         session_id=session_id,
         metadata=session["metadata"],
@@ -129,12 +138,13 @@ def create_session() -> Response:
 
 
 @api_bp.route("/sessions/<session_id>", methods=["GET"])
+@require_api_key
+@rate_limit
 def get_session(session_id: str) -> Response:
     store = get_session_store()
-    session = store.get_session(session_id)
+    session = store.get_session(session_id, owner=current_client_id())
     if not session:
-        error = ErrorResponse(code="not_found", message="Session not found", details=[{"session_id": session_id}])
-        return jsonify({"error": error.dict()}), 404
+        return _session_not_found(session_id)
 
     response = SessionResponse(
         session_id=session_id,
@@ -144,6 +154,11 @@ def get_session(session_id: str) -> Response:
         messages=session["messages"],
     )
     return jsonify(response.model_dump())
+
+
+def _session_not_found(session_id: str):
+    error = ErrorResponse(code="not_found", message="Session not found", details=[{"session_id": session_id}])
+    return jsonify({"error": error.model_dump()}), 404
 
 
 def _parse_payload(model):

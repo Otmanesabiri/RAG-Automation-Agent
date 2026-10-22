@@ -10,6 +10,8 @@ from typing import Callable, DefaultDict, Dict
 
 from flask import jsonify, request
 
+from .middleware import ANONYMOUS_CLIENT, current_client_id
+
 
 class RateLimiter:
     """Simple token bucket rate limiter."""
@@ -82,8 +84,12 @@ def _is_rate_limit_enabled() -> bool:
 
 
 def _get_client_key() -> str:
-    """Generate key for rate limiting based on API key or IP address."""
-    api_key = request.headers.get("X-API-Key")
-    if api_key:
-        return f"apikey:{api_key}"
+    """Generate key for rate limiting based on the authenticated client or IP address.
+
+    Only identities validated by ``require_api_key`` are trusted: keying on the raw
+    header would let callers get a fresh bucket by sending a random key.
+    """
+    client_id = current_client_id()
+    if client_id != ANONYMOUS_CLIENT:
+        return client_id
     return f"ip:{request.remote_addr}"

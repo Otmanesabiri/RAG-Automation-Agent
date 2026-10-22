@@ -1,4 +1,4 @@
-"""Rate limiting middleware using in-memory storage."""
+"""Rate limiting middleware (in-memory, or Redis when REDIS_URL is set)."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import Callable, DefaultDict, Dict
 
 from flask import jsonify, request
 
+from ..redis_client import get_redis_client
 from .middleware import ANONYMOUS_CLIENT, current_client_id
 
 
@@ -37,15 +38,37 @@ class RateLimiter:
         return False
 
 
-_global_limiter: RateLimiter | None = None
+class RedisRateLimiter:
+    """Fixed-window (one minute) limiter shared by every worker through Redis."""
+
+    def __init__(self, client, requests_per_minute: int = 60, prefix: str = "rag:ratelimit:") -> None:
+        self.client = client
+        self.requests_per_minute = requests_per_minute
+        self.prefix = prefix
+
+    def is_allowed(self, key: str) -> bool:
+        window = int(time.time() // 60)
+        redis_key = f"{self.prefix}{key}:{window}"
+        pipe = self.client.pipeline()
+        pipe.incr(redis_key)
+        pipe.expire(redis_key, 120)
+        count, _ = pipe.execute()
+        return count <= self.requests_per_minute
 
 
-def get_rate_limiter() -> RateLimiter:
-    """Get or create global rate limiter instance."""
+_global_limiter: RateLimiter | RedisRateLimiter | None = None
+
+
+def get_rate_limiter() -> RateLimiter | RedisRateLimiter:
+    """Get or create the global rate limiter (Redis-backed when REDIS_URL is set)."""
     global _global_limiter
     if _global_limiter is None:
         rpm = int(os.getenv("RATE_LIMIT_RPM", "60"))
-        _global_limiter = RateLimiter(requests_per_minute=rpm)
+        client = get_redis_client()
+        if client is None:
+            _global_limiter = RateLimiter(requests_per_minute=rpm)
+        else:
+            _global_limiter = RedisRateLimiter(client, requests_per_minute=rpm)
     return _global_limiter
 
 

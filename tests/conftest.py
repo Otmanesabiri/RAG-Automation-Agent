@@ -48,6 +48,7 @@ def env(monkeypatch):
         "RATE_LIMIT_RPM": "1000",
         "LOG_FILE": "",
         "LOG_LEVEL": "WARNING",
+        "REDIS_URL": "",
     }
     for key, value in values.items():
         monkeypatch.setenv(key, value)

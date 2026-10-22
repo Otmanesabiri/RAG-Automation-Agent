@@ -1,0 +1,13 @@
+[tool.black]
+line-length = 127
+target-version = ["py312"]
+
+[tool.isort]
+profile = "black"
+line_length = 127
+known_first_party = ["src"]
+
+[tool.coverage.run]
+# Required by the PR coverage comment action (reads .coverage from another path)
+relative_files = true
+source = ["src"]

@@ -31,6 +31,9 @@ class ChunkingConfig:
     separators: Optional[List[str]] = None
     metadata_fields: Dict[str, str] = field(default_factory=dict)
     language: Optional[str] = None
+    # Split Markdown/HTML on headings first, so chunks never straddle sections
+    # and carry their section path in metadata.
+    structure_aware: bool = True
 
     def __post_init__(self) -> None:
         if self.chunk_overlap >= self.chunk_size:

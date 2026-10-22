@@ -1,0 +1,21 @@
+{
+  "shared-docs": {
+    "type": "local",
+    "path": "/data/shared-docs",
+    "patterns": ["*.pdf", "*.docx", "*.md"],
+    "metadata": {"department": "operations"}
+  },
+  "policies-bucket": {
+    "type": "s3",
+    "bucket": "my-company-policies",
+    "prefix": "published/",
+    "metadata": {"access_level": "internal"}
+  },
+  "engineering-wiki": {
+    "type": "confluence",
+    "base_url": "https://mycompany.atlassian.net/wiki",
+    "space_key": "ENG",
+    "username": "bot@mycompany.com",
+    "token_env": "CONFLUENCE_API_TOKEN"
+  }
+}

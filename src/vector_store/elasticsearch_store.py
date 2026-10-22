@@ -19,8 +19,27 @@ from .client import create_es_client
 INDEX_TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "configs" / "elasticsearch_index.json"
 
 
+SEARCH_MODES = {"dense", "sparse", "hybrid"}
+SEARCH_SOURCE_FIELDS = ["id", "document_id", "content", "metadata", "source", "created_at"]
+RRF_RANK_CONSTANT = 60
+
+
 class IndexDimensionMismatchError(RuntimeError):
     """Raised when the index was built for a different embedding model."""
+
+
+def reciprocal_rank_fusion(result_lists: List[List[Dict[str, Any]]], k: int) -> List[Dict[str, Any]]:
+    """Merge ranked lists: each hit scores sum(1 / (60 + rank)) over the lists it appears in.
+
+    RRF only uses ranks, so it combines BM25 and cosine scores that live on
+    different scales without any normalisation.
+    """
+    fused: Dict[str, Dict[str, Any]] = {}
+    for results in result_lists:
+        for rank, hit in enumerate(results, start=1):
+            entry = fused.setdefault(hit["id"], {**hit, "score": 0.0})
+            entry["score"] += 1.0 / (RRF_RANK_CONSTANT + rank)
+    return sorted(fused.values(), key=lambda hit: hit["score"], reverse=True)[:k]
 
 
 class ElasticsearchVectorStore:
@@ -71,9 +90,14 @@ class ElasticsearchVectorStore:
         return True
 
     @staticmethod
-    def document_id_for(source: str) -> str:
-        """Stable id of a source document: re-ingesting the same source replaces it."""
-        return hashlib.sha256(source.encode("utf-8")).hexdigest()[:32]
+    def document_id_for(source: str, tenant: Optional[str] = None) -> str:
+        """Stable id of a source document: re-ingesting the same source replaces it.
+
+        The tenant is part of the id, so two tenants uploading "notes.txt" never
+        overwrite each other's chunks.
+        """
+        key = f"{tenant}\x00{source}" if tenant else source
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
 
     @staticmethod
     def chunk_id_for(document_id: str, index: int, content: str) -> str:
@@ -104,7 +128,7 @@ class ElasticsearchVectorStore:
         ids_by_document: Dict[str, List[str]] = defaultdict(list)
         for position, (doc, embedding) in enumerate(zip(documents, embeddings)):
             source = doc.metadata.get("source", "unknown")
-            document_id = self.document_id_for(source)
+            document_id = self.document_id_for(source, doc.metadata.get("tenant"))
             chunk_index = doc.metadata.get("chunk_index", position)
             chunk_id = self.chunk_id_for(document_id, chunk_index, doc.page_content)
             ids_by_document[document_id].append(chunk_id)
@@ -137,7 +161,21 @@ class ElasticsearchVectorStore:
             conflicts="proceed",
         )
 
-    def list_documents(self, *, size: int = 20, after: Optional[str] = None) -> Dict[str, Any]:
+    def _scoped(
+        self, query: Dict[str, Any], filters: Optional[Dict[str, Any]], user_permissions: Optional[List[str]]
+    ) -> Dict[str, Any]:
+        """Add the caller's mandatory restrictions (tenant, access levels) to a query."""
+        restriction = self._build_advanced_filters(filters=filters, user_permissions=user_permissions)
+        return {"bool": {"filter": [query, restriction]}} if restriction else query
+
+    def list_documents(
+        self,
+        *,
+        size: int = 20,
+        after: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        user_permissions: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         """Page through source documents (one entry per document, not per chunk)."""
         composite: Dict[str, Any] = {"size": size, "sources": [{"document_id": {"terms": {"field": "document_id"}}}]}
         if after:
@@ -145,6 +183,7 @@ class ElasticsearchVectorStore:
         response = self.client.search(
             index=self.index_name,
             size=0,
+            query=self._scoped({"match_all": {}}, filters, user_permissions),
             aggs={
                 "documents": {
                     "composite": composite,
@@ -171,11 +210,17 @@ class ElasticsearchVectorStore:
         next_after = agg.get("after_key", {}).get("document_id") if len(documents) == size else None
         return {"documents": documents, "next": next_after}
 
-    def get_document(self, document_id: str) -> Optional[Dict[str, Any]]:
-        """Return a document with its chunks in order, or None if unknown."""
+    def get_document(
+        self,
+        document_id: str,
+        *,
+        filters: Optional[Dict[str, Any]] = None,
+        user_permissions: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Return a document with its chunks in order, or None if unknown (or not visible to the caller)."""
         response = self.client.search(
             index=self.index_name,
-            query={"term": {"document_id": document_id}},
+            query=self._scoped({"term": {"document_id": document_id}}, filters, user_permissions),
             size=10000,
             _source=["id", "content", "metadata", "source", "created_at"],
         )
@@ -192,11 +237,17 @@ class ElasticsearchVectorStore:
             ],
         }
 
-    def delete_document(self, document_id: str) -> int:
-        """Delete every chunk of a document; returns the number of chunks removed."""
+    def delete_document(
+        self,
+        document_id: str,
+        *,
+        filters: Optional[Dict[str, Any]] = None,
+        user_permissions: Optional[List[str]] = None,
+    ) -> int:
+        """Delete every chunk of a document visible to the caller; returns the number of chunks removed."""
         response = self.client.delete_by_query(
             index=self.index_name,
-            query={"term": {"document_id": document_id}},
+            query=self._scoped({"term": {"document_id": document_id}}, filters, user_permissions),
             refresh=True,
             conflicts="proceed",
         )
@@ -210,50 +261,89 @@ class ElasticsearchVectorStore:
         min_score: Optional[float] = None,
         max_age_days: Optional[int] = None,
         user_permissions: Optional[List[str]] = None,
+        mode: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Perform kNN vector similarity search with advanced filtering.
-        
+        Search chunks with advanced filtering.
+
         Args:
             query: Search query text
             k: Number of results to return
             filters: Custom metadata filters (e.g., {"category": "education"})
-            min_score: Minimum similarity score threshold (0-1)
+            min_score: Minimum similarity score threshold (0-1), dense search only
             max_age_days: Maximum age of documents in days
             user_permissions: List of permission levels user has access to
-        
+            mode: "dense" (kNN), "sparse" (BM25), or "hybrid" (both, fused with
+                Reciprocal Rank Fusion). Defaults to SEARCH_MODE (hybrid).
+
         Returns:
             List of matching documents with scores
         """
-        query_embedding = self.embedding_service.embed_query(query)
-
-        knn_query = {
-            "field": "embedding",
-            "query_vector": query_embedding,
-            "k": k,
-            "num_candidates": k * 10,
-        }
+        mode = (mode or os.getenv("SEARCH_MODE", "hybrid")).lower()
+        if mode not in SEARCH_MODES:
+            raise ValueError(f"Unknown search mode: {mode}. Use one of {sorted(SEARCH_MODES)}")
 
         # Build combined filters
         combined_filters = self._build_advanced_filters(
-            filters=filters,
-            max_age_days=max_age_days,
-            user_permissions=user_permissions
+            filters=filters, max_age_days=max_age_days, user_permissions=user_permissions
         )
-        
+
+        if mode == "dense":
+            return self._dense_search(query, k, combined_filters, min_score)
+        if mode == "sparse":
+            return self._sparse_search(query, k, combined_filters)
+
+        # Each retriever contributes a deeper candidate list so fusion can
+        # promote chunks that rank well in both.
+        depth = max(k * 2, 10)
+        return reciprocal_rank_fusion(
+            [
+                self._dense_search(query, depth, combined_filters, min_score),
+                self._sparse_search(query, depth, combined_filters),
+            ],
+            k=k,
+        )
+
+    def _dense_search(
+        self,
+        query: str,
+        k: int,
+        combined_filters: Optional[Dict[str, Any]],
+        min_score: Optional[float],
+    ) -> List[Dict[str, Any]]:
+        knn_query: Dict[str, Any] = {
+            "field": "embedding",
+            "query_vector": self.embedding_service.embed_query(query),
+            "k": k,
+            "num_candidates": k * 10,
+        }
         if combined_filters:
             knn_query["filter"] = combined_filters
 
-        search_body = {
-            "knn": knn_query,
-            "_source": ["id", "document_id", "content", "metadata", "source", "created_at"],
-        }
-        
-        # Add minimum score if specified
+        search_body: Dict[str, Any] = {"knn": knn_query, "_source": SEARCH_SOURCE_FIELDS}
         if min_score is not None:
             search_body["min_score"] = min_score
 
         response = self.client.search(index=self.index_name, body=search_body)
+        return self._hits_to_results(response)
+
+    def _sparse_search(
+        self,
+        query: str,
+        k: int,
+        combined_filters: Optional[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        bool_query: Dict[str, Any] = {"must": [{"match": {"content": {"query": query}}}]}
+        if combined_filters:
+            bool_query["filter"] = [combined_filters]
+        response = self.client.search(
+            index=self.index_name,
+            body={"query": {"bool": bool_query}, "size": k, "_source": SEARCH_SOURCE_FIELDS},
+        )
+        return self._hits_to_results(response)
+
+    @staticmethod
+    def _hits_to_results(response: Dict[str, Any]) -> List[Dict[str, Any]]:
         results = []
         for hit in response["hits"]["hits"]:
             results.append(
@@ -275,7 +365,7 @@ class ElasticsearchVectorStore:
         for key, value in filters.items():
             must_clauses.append({"term": {f"metadata.{key}": value}})
         return {"bool": {"must": must_clauses}} if must_clauses else {}
-    
+
     def _build_advanced_filters(
         self,
         filters: Optional[Dict[str, Any]] = None,
@@ -284,17 +374,17 @@ class ElasticsearchVectorStore:
     ) -> Optional[Dict[str, Any]]:
         """
         Build advanced Elasticsearch filters.
-        
+
         Args:
             filters: Custom metadata filters
             max_age_days: Maximum document age in days
             user_permissions: List of access levels user has
-        
+
         Returns:
             Elasticsearch query DSL filter or None
         """
         must_clauses = []
-        
+
         # Add custom metadata filters
         if filters:
             for key, value in filters.items():
@@ -304,35 +394,32 @@ class ElasticsearchVectorStore:
                 else:
                     # Single value = exact match
                     must_clauses.append({"term": {f"metadata.{key}": value}})
-        
+
         # Add age filter (documents newer than max_age_days)
         if max_age_days is not None:
             from datetime import datetime, timedelta
+
             cutoff_date = (datetime.utcnow() - timedelta(days=max_age_days)).isoformat()
-            must_clauses.append({
-                "range": {
-                    "created_at": {
-                        "gte": cutoff_date
-                    }
-                }
-            })
-        
+            must_clauses.append({"range": {"created_at": {"gte": cutoff_date}}})
+
         # Add permission filter (user can only see docs with their access levels)
         if user_permissions is not None:
             # If metadata.access_level exists, it must be in user_permissions
             # If metadata.access_level doesn't exist, document is public (accessible to all)
-            must_clauses.append({
-                "bool": {
-                    "should": [
-                        # Document has no access_level = public
-                        {"bool": {"must_not": {"exists": {"field": "metadata.access_level"}}}},
-                        # Document access_level matches user permissions
-                        {"terms": {"metadata.access_level": user_permissions}}
-                    ],
-                    "minimum_should_match": 1
+            must_clauses.append(
+                {
+                    "bool": {
+                        "should": [
+                            # Document has no access_level = public
+                            {"bool": {"must_not": {"exists": {"field": "metadata.access_level"}}}},
+                            # Document access_level matches user permissions
+                            {"terms": {"metadata.access_level": user_permissions}},
+                        ],
+                        "minimum_should_match": 1,
+                    }
                 }
-            })
-        
+            )
+
         # Return combined filter
         if must_clauses:
             return {"bool": {"must": must_clauses}}

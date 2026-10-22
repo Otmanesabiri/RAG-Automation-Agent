@@ -76,14 +76,23 @@ class _Store:
 
     def similarity_search(self, query, k, **kwargs):
         self.k = k
-        return [{"id": f"c{i}", "document_id": "d", "content": f"text {i}", "source": "s", "score": 1.0 - i / 10} for i in range(k)]
+        return [
+            {"id": f"c{i}", "document_id": "d", "content": f"text {i}", "source": "s", "score": 1.0 - i / 10} for i in range(k)
+        ]
 
 
 class _Reranker:
     def rerank(self, question, docs, top_k):
         ranked = list(reversed(docs))[:top_k]
         return [
-            SimpleNamespace(document_id=d["id"], content=d["content"], snippet=d["content"], source=d["source"], rerank_score=9.0, metadata={})
+            SimpleNamespace(
+                document_id=d["id"],
+                content=d["content"],
+                snippet=d["content"],
+                source=d["source"],
+                rerank_score=9.0,
+                metadata={},
+            )
             for d in ranked
         ]
 
@@ -225,3 +234,73 @@ def test_route_passes_previous_messages(client, auth_headers, fakes):
 
     history = fakes["rag_service"].calls[-1]["history"]
     assert [m["content"] for m in history] == ["first", "answer to first"]
+
+
+class _ExpandingLLM(_LLM):
+    def __init__(self, reply):
+        self.reply = reply
+        self.prompts = []
+
+    def generate(self, prompt, **kwargs):
+        self.prompts.append(prompt)
+        if "search queries" in prompt or "factual passage" in prompt:
+            if isinstance(self.reply, Exception):
+                raise self.reply
+            return self.reply
+        return "answer"
+
+
+class _MultiStore(_Store):
+    def __init__(self):
+        super().__init__()
+        self.queries = []
+
+    def similarity_search(self, query, k, **kwargs):
+        self.queries.append(query)
+        return [{"id": f"{query}-{i}", "document_id": "d", "content": query, "source": "s", "score": 1.0} for i in range(k)]
+
+
+def test_multi_query_searches_each_reformulation_and_fuses():
+    service = _service()
+    service.reranker = None
+    service.vector_store = _MultiStore()
+    service.llm_service = _ExpandingLLM("1. solar panel downsides\n- disadvantages of photovoltaics\n\nsolar drawbacks?")
+
+    result = service.query("solar drawbacks?", top_k=3, query_expansion="multi_query")
+
+    assert service.vector_store.queries == ["solar drawbacks?", "solar panel downsides", "disadvantages of photovoltaics"]
+    assert result["metadata"]["expanded_queries"] == ["solar panel downsides", "disadvantages of photovoltaics"]
+    assert len(result["sources"]) == 3
+    assert {s["chunk_id"].rsplit("-", 1)[0] for s in result["sources"]} == set(service.vector_store.queries)
+
+
+def test_hyde_searches_the_hypothetical_passage():
+    service = _service()
+    service.reranker = None
+    service.vector_store = _MultiStore()
+    service.llm_service = _ExpandingLLM("Solar panels lose efficiency in heat and cost a lot upfront.")
+    service.query("solar drawbacks?", top_k=2, query_expansion="hyde")
+    assert service.vector_store.queries[1].startswith("Solar panels lose efficiency")
+
+
+def test_expansion_failure_falls_back_to_the_question():
+    service = _service()
+    service.reranker = None
+    service.vector_store = _MultiStore()
+    service.llm_service = _ExpandingLLM(RuntimeError("LLM down"))
+    result = service.query("q", top_k=1, query_expansion="multi_query")
+    assert service.vector_store.queries == ["q"]
+    assert result["metadata"]["expanded_queries"] == []
+
+
+def test_expansion_defaults_to_env(monkeypatch):
+    service = _service()
+    service.llm_service = _ExpandingLLM("alt query")
+    assert service.expand_query("q", None) == []
+    monkeypatch.setenv("QUERY_EXPANSION", "multi_query")
+    assert service.expand_query("q", None) == ["alt query"]
+
+
+def test_query_expansion_is_forwarded_by_the_api(client, auth_headers, fakes):
+    client.post("/query", json={"query": "q", "query_expansion": "hyde"}, headers=auth_headers)
+    assert fakes["rag_service"].calls[-1]["query_expansion"] == "hyde"

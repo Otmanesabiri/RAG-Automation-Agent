@@ -26,23 +26,26 @@ class FakeVectorStore:
     def _by_document(self) -> Dict[str, List[Any]]:
         grouped: Dict[str, List[Any]] = {}
         for doc in self.indexed:
-            grouped.setdefault(self.document_id_for(doc.metadata["source"]), []).append(doc)
+            grouped.setdefault(self.document_id_for(doc.metadata["source"], doc.metadata.get("tenant")), []).append(doc)
         return grouped
 
-    def list_documents(self, *, size=20, after=None):
+    def list_documents(self, *, size=20, after=None, **scope):
+        self.last_scope = scope
         docs = [
             {"document_id": doc_id, "source": chunks[0].metadata["source"], "chunks": len(chunks)}
             for doc_id, chunks in sorted(self._by_document().items())
         ]
         return {"documents": docs[:size], "next": None}
 
-    def get_document(self, document_id):
+    def get_document(self, document_id, **scope):
+        self.last_scope = scope
         chunks = self._by_document().get(document_id)
         if not chunks:
             return None
         return {"document_id": document_id, "source": chunks[0].metadata["source"], "chunks": len(chunks)}
 
-    def delete_document(self, document_id):
+    def delete_document(self, document_id, **scope):
+        self.last_scope = scope
         chunks = self._by_document().get(document_id, [])
         self.indexed = [doc for doc in self.indexed if doc not in chunks]
         return len(chunks)

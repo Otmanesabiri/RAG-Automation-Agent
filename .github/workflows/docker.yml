@@ -47,7 +47,7 @@ jobs:
           type=semver,pattern={{version}}
           type=semver,pattern={{major}}.{{minor}}
           type=semver,pattern={{major}}
-          type=sha,prefix={{branch}}-
+          type=sha,prefix=sha-,format=long
           type=raw,value=latest,enable={{is_default_branch}}
 
     - name: Build and push Docker image
@@ -62,11 +62,15 @@ jobs:
         cache-to: type=gha,mode=max
         platforms: linux/amd64,linux/arm64
 
+    # Image references must be lowercase (the repository name is not)
+    - name: Lowercase image name
+      run: echo "IMAGE_REF=${REGISTRY}/${IMAGE_NAME,,}" >> "$GITHUB_ENV"
+
     - name: Run Trivy vulnerability scanner
       if: github.event_name != 'pull_request'
-      uses: aquasecurity/trivy-action@master
+      uses: aquasecurity/trivy-action@0.28.0
       with:
-        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+        image-ref: ${{ env.IMAGE_REF }}:sha-${{ github.sha }}
         format: 'sarif'
         output: 'trivy-results.sarif'
 

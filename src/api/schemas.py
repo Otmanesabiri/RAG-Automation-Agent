@@ -61,6 +61,9 @@ class QueryRequest(BaseModel):
     search_mode: Optional[Literal["dense", "sparse", "hybrid"]] = Field(
         None, description="kNN, BM25 or both fused with RRF; null uses SEARCH_MODE."
     )
+    query_expansion: Optional[Literal["none", "multi_query", "hyde"]] = Field(
+        None, description="Extra LLM-generated search queries; null uses QUERY_EXPANSION."
+    )
 
 
 class QueryResponse(BaseModel):

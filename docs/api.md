@@ -52,10 +52,12 @@ REST endpoints of the Flask interface. Every endpoint except `/health` and `/met
     "prompt_type": "strict",
     "min_score": 0.5,
     "max_age_days": 365,
+    "search_mode": "hybrid",
     "stream": false
   }
   ```
   - `rerank`: force cross-encoder re-ranking on/off; omit for the server default.
+  - `search_mode`: `dense` (kNN), `sparse` (BM25) or `hybrid` (both, fused with Reciprocal Rank Fusion); omit for `SEARCH_MODE` (default `hybrid`). `min_score` only applies to the dense part.
   - `prompt_type`: `default`, `strict`, `citation`, `contradiction`, `confidence`, `structured`.
   - `session_id`: must belong to the caller; omit to start a new session.
 - **Response**:

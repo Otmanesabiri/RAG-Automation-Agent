@@ -159,6 +159,7 @@ def query_documents() -> Response:
         "max_age_days": payload.max_age_days,
         "prompt_type": payload.prompt_type,
         "rerank": payload.rerank,
+        "search_mode": payload.search_mode,
         "history": history,
     }
 

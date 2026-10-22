@@ -58,6 +58,9 @@ class QueryRequest(BaseModel):
     prompt_type: Optional[PromptType] = None
     min_score: Optional[float] = Field(None, ge=0)
     max_age_days: Optional[int] = Field(None, ge=1)
+    search_mode: Optional[Literal["dense", "sparse", "hybrid"]] = Field(
+        None, description="kNN, BM25 or both fused with RRF; null uses SEARCH_MODE."
+    )
 
 
 class QueryResponse(BaseModel):

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, HttpUrl, validator
+from pydantic import BaseModel, Field, HttpUrl, model_validator, validator
 
 
 class DocumentPayload(BaseModel):
@@ -28,6 +28,12 @@ class IngestOptions(BaseModel):
     chunk_overlap: Optional[int] = Field(None, ge=0, le=1000)
     language: Optional[str] = Field(None, description="Language hint for tokenization.")
 
+    @model_validator(mode="after")
+    def check_overlap(self) -> "IngestOptions":
+        if self.chunk_size and self.chunk_overlap is not None and self.chunk_overlap >= self.chunk_size:
+            raise ValueError("chunk_overlap must be smaller than chunk_size")
+        return self
+
 
 class IngestRequest(BaseModel):
     source: str = Field(..., description="Origin of documents: upload or url.")
@@ -39,13 +45,19 @@ class QueryFilters(BaseModel):
     attributes: Dict[str, Any] = Field(default_factory=dict)
 
 
+PromptType = Literal["default", "strict", "citation", "contradiction", "confidence", "structured"]
+
+
 class QueryRequest(BaseModel):
-    query: str
+    query: str = Field(..., min_length=1, max_length=4000)
     session_id: Optional[str] = None
     top_k: int = Field(4, ge=1, le=20)
     filters: QueryFilters = Field(default_factory=QueryFilters)
-    rerank: bool = False
-    stream: bool = False
+    rerank: Optional[bool] = Field(None, description="Force re-ranking on/off; null uses the server default.")
+    stream: bool = Field(False, description="Stream the answer as Server-Sent Events.")
+    prompt_type: Optional[PromptType] = None
+    min_score: Optional[float] = Field(None, ge=0)
+    max_age_days: Optional[int] = Field(None, ge=1)
 
 
 class QueryResponse(BaseModel):

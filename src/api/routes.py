@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import base64
+import json
 from typing import Any, Dict
 
-from flask import Blueprint, Response, current_app, jsonify, request
+from flask import Blueprint, Response, current_app, jsonify, request, stream_with_context
 from pydantic import ValidationError
 
 from ..auth import current_client_id, rate_limit, require_api_key
+from ..ingestion.config import ChunkingConfig
 from ..observability import get_logger, track_ingestion, track_query
 from .dependencies import get_ingestion_pipeline, get_rag_service, get_session_store, get_vector_store
 from .schemas import (
@@ -51,6 +53,19 @@ def ingest_documents() -> Response:
 
     logger.info(f"Ingesting {len(payload.documents)} documents from source={payload.source}")
 
+    chunking = None
+    if payload.options:
+        defaults = pipeline.chunking_service.config
+        chunk_size = payload.options.chunk_size or defaults.chunk_size
+        chunk_overlap = payload.options.chunk_overlap
+        if chunk_overlap is None:
+            chunk_overlap = min(defaults.chunk_overlap, chunk_size // 4)
+        try:
+            chunking = ChunkingConfig(chunk_size=chunk_size, chunk_overlap=chunk_overlap, language=payload.options.language)
+        except ValueError as exc:
+            error = ErrorResponse(code="validation_error", message=str(exc))
+            return jsonify({"error": error.model_dump()}), 422
+
     created_documents = []
     for document in payload.documents:
         metadata = {**document.metadata}
@@ -58,11 +73,11 @@ def ingest_documents() -> Response:
             metadata.setdefault("mime_type", document.mime_type)
 
         if payload.source == "url" and document.url:
-            result = pipeline.ingest_url(str(document.url), metadata=metadata)
+            result = pipeline.ingest_url(str(document.url), metadata=metadata, chunking=chunking)
         else:
             filename = document.filename or "document.txt"
             content_bytes = _resolve_document_bytes(document)
-            result = pipeline.ingest_bytes(content=content_bytes, filename=filename, metadata=metadata)
+            result = pipeline.ingest_bytes(content=content_bytes, filename=filename, metadata=metadata, chunking=chunking)
 
         # Index chunks into Elasticsearch with embeddings
         doc_ids = vector_store.add_documents(result.chunks)
@@ -134,13 +149,20 @@ def query_documents() -> Response:
 
     logger.info(f"Executing RAG query: {payload.query[:100]}... (session={session_id})")
 
+    options = {
+        "top_k": payload.top_k,
+        "filters": payload.filters.attributes if payload.filters else None,
+        "min_score": payload.min_score,
+        "max_age_days": payload.max_age_days,
+        "prompt_type": payload.prompt_type,
+        "rerank": payload.rerank,
+    }
+
+    if payload.stream:
+        return _stream_answer(rag_service, session_store, session_id, payload.query, options)
+
     # Execute RAG query with retrieval + generation
-    rag_response = rag_service.query(
-        question=payload.query,
-        top_k=payload.top_k,
-        filters=payload.filters.attributes if payload.filters else None,
-        include_sources=True,
-    )
+    rag_response = rag_service.query(question=payload.query, include_sources=True, **options)
 
     logger.info(f"RAG query completed, retrieved {len(rag_response.get('sources', []))} sources")
 
@@ -194,6 +216,31 @@ def get_session(session_id: str) -> Response:
     return jsonify(response.model_dump())
 
 
+def _stream_answer(rag_service, session_store, session_id: str, question: str, options: Dict[str, Any]) -> Response:
+    """Server-Sent Events: ``sources``, then ``token`` chunks, then ``done`` (or ``error``)."""
+
+    def events():
+        try:
+            for event in rag_service.stream_query(question, **options):
+                data = event["data"]
+                if event["event"] == "done":
+                    data = {**data, "metadata": {**data.get("metadata", {}), "session_id": session_id}}
+                    session_store.append_message(session_id, "assistant", data["answer"])
+                yield _sse(event["event"], data)
+        except Exception as exc:  # headers are already sent: report the failure in-band
+            logger.exception(f"Streaming query failed: {exc}")
+            yield _sse("error", {"code": "internal_server_error", "message": "An internal error occurred"})
+
+    response = Response(stream_with_context(events()), mimetype="text/event-stream")
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    return response
+
+
+def _sse(event: str, data: Any) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
 def _document_not_found(document_id: str):
     error = ErrorResponse(code="not_found", message="Document not found", details=[{"document_id": document_id}])
     return jsonify({"error": error.model_dump()}), 404
@@ -221,7 +268,8 @@ def _parse_payload(model):
         error = ErrorResponse(
             code="validation_error",
             message="Payload validation failed",
-            details=exc.errors(),
+            # ctx can hold the raw exception object, which is not JSON serializable
+            details=exc.errors(include_url=False, include_context=False),
         )
         raise _ValidationException(jsonify({"error": error.model_dump()}), 422)
 

@@ -40,9 +40,10 @@ class IngestionPipeline:
         path: str,
         *,
         metadata: Optional[Dict[str, str]] = None,
+        chunking: Optional[ChunkingConfig] = None,
     ) -> IngestionResult:
         batch = self.loader_factory.load_from_path(path, metadata=metadata)
-        chunks = self._chunk(batch.documents)
+        chunks = self._chunk(batch.documents, chunking)
         return self._build_result(batch, chunks)
 
     def ingest_url(
@@ -50,9 +51,10 @@ class IngestionPipeline:
         url: str,
         *,
         metadata: Optional[Dict[str, str]] = None,
+        chunking: Optional[ChunkingConfig] = None,
     ) -> IngestionResult:
         batch = self.loader_factory.load_from_url(url, metadata=metadata)
-        chunks = self._chunk(batch.documents)
+        chunks = self._chunk(batch.documents, chunking)
         return self._build_result(batch, chunks)
 
     def ingest_bytes(
@@ -61,13 +63,14 @@ class IngestionPipeline:
         content: bytes,
         filename: str,
         metadata: Optional[Dict[str, str]] = None,
+        chunking: Optional[ChunkingConfig] = None,
     ) -> IngestionResult:
         batch = self.loader_factory.load_from_bytes(content=content, filename=filename, metadata=metadata)
-        chunks = self._chunk(batch.documents)
+        chunks = self._chunk(batch.documents, chunking)
         return self._build_result(batch, chunks)
 
-    def _chunk(self, documents: Iterable[DocumentLike]) -> List[DocumentLike]:
-        return self.chunking_service.split_documents(documents)
+    def _chunk(self, documents: Iterable[DocumentLike], chunking: Optional[ChunkingConfig] = None) -> List[DocumentLike]:
+        return self.chunking_service.split_documents(documents, config=chunking)
 
     def _build_result(
         self,

@@ -5,12 +5,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict
 
 from dotenv import load_dotenv
 from elasticsearch import Elasticsearch
 from elasticsearch.exceptions import NotFoundError
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src.vector_store.client import create_es_client  # noqa: E402
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "configs" / "elasticsearch_index.json"
 
@@ -24,11 +29,7 @@ def load_index_config(path: Path) -> Dict[str, Any]:
 
 
 def create_client(url: str, username: str | None, password: str | None) -> Elasticsearch:
-    return Elasticsearch(
-        hosts=[url],
-        basic_auth=(username or "elastic", password or os.environ.get("ELASTIC_PASSWORD", "changeme")),
-        verify_certs=False,
-    )
+    return create_es_client(url, username, password)
 
 
 def ensure_index(client: Elasticsearch, index_name: str, body: Dict[str, Any]) -> None:
@@ -55,7 +56,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH), help="Path to index configuration JSON")
     parser.add_argument("--url", default=os.getenv("ELASTICSEARCH_URL", "http://localhost:9200"), help="Elasticsearch endpoint URL")
     parser.add_argument("--username", default=os.getenv("ELASTICSEARCH_USERNAME", "elastic"), help="Elasticsearch username")
-    parser.add_argument("--password", default=os.getenv("ELASTICSEARCH_PASSWORD", os.getenv("ELASTIC_PASSWORD", "changeme")), help="Elasticsearch password")
+    parser.add_argument("--password", default=os.getenv("ELASTICSEARCH_PASSWORD", os.getenv("ELASTIC_PASSWORD")), help="Elasticsearch password")
     parser.add_argument("--delete", action="store_true", help="Delete the index instead of creating it")
     return parser.parse_args()
 

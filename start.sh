@@ -29,6 +29,11 @@ if [ ! -f .env ]; then
     exit 1
 fi
 
+# Load settings (ELASTICSEARCH_PASSWORD, ...) from .env
+set -a
+source .env
+set +a
+
 # Check if virtual environment exists
 if [ ! -d .venv ]; then
     echo -e "${RED}❌ Virtual environment not found. Please run: python3 -m venv .venv${NC}"
@@ -54,7 +59,7 @@ echo -e "${YELLOW}⏳ Waiting for Elasticsearch to be ready...${NC}"
 max_attempts=30
 attempt=0
 while [ $attempt -lt $max_attempts ]; do
-    if curl -s -u "elastic:changeme" http://localhost:9200/_cluster/health > /dev/null 2>&1; then
+    if curl -s -u "${ELASTICSEARCH_USERNAME:-elastic}:${ELASTICSEARCH_PASSWORD}" http://localhost:9200/_cluster/health > /dev/null 2>&1; then
         echo -e "${GREEN}✓ Elasticsearch is ready${NC}"
         break
     fi

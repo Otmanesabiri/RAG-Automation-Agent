@@ -110,7 +110,7 @@ class CrossEncoderReranker:
             ranked_docs = []
             for idx, (doc, rerank_score) in enumerate(zip(documents, scores)):
                 ranked_doc = RankedDocument(
-                    document_id=doc.get('document_id', f"doc_{idx}"),
+                    document_id=doc.get('id') or doc.get('document_id', f"doc_{idx}"),
                     content=doc.get('content', ''),
                     snippet=doc.get('snippet', doc.get('content', '')[:200]),
                     source=doc.get('source', 'unknown'),
@@ -139,7 +139,7 @@ class CrossEncoderReranker:
             # Fallback: return original documents without re-ranking
             return [
                 RankedDocument(
-                    document_id=doc.get('document_id', f"doc_{i}"),
+                    document_id=doc.get('id') or doc.get('document_id', f"doc_{i}"),
                     content=doc.get('content', ''),
                     snippet=doc.get('snippet', '')[:200],
                     source=doc.get('source', 'unknown'),

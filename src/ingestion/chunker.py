@@ -18,27 +18,36 @@ class ChunkingService:
         self.config = config or ChunkingConfig()
         self.enable_heuristics = enable_heuristics
  
-    def split_documents(self, documents: Iterable[DocumentLike]) -> List[DocumentLike]:
-        """Split documents into smaller chunks with metadata propagation."""
+    def split_documents(
+        self,
+        documents: Iterable[DocumentLike],
+        *,
+        config: Optional[ChunkingConfig] = None,
+    ) -> List[DocumentLike]:
+        """Split documents into smaller chunks with metadata propagation.
+
+        An explicit `config` (e.g. per-request options) is applied as-is,
+        bypassing the size heuristics.
+        """
 
         chunks: List[DocumentLike] = []
         for document in documents:
-            config = self._resolve_config(document)
+            doc_config = config or self._resolve_config(document)
             splitter = RecursiveCharacterTextSplitter(
-                chunk_size=config.chunk_size,
-                chunk_overlap=config.chunk_overlap,
-                separators=config.separators,
+                chunk_size=doc_config.chunk_size,
+                chunk_overlap=doc_config.chunk_overlap,
+                separators=doc_config.separators,
             )
             split_docs = splitter.split_documents([document])
             for idx, chunk in enumerate(split_docs):
                 chunk.metadata = {
                     **document.metadata,
-                    **config.metadata_fields,
+                    **doc_config.metadata_fields,
                     "chunk_index": idx,
                     "chunk_count": len(split_docs),
-                    "chunk_size": config.chunk_size,
-                    "chunk_overlap": config.chunk_overlap,
-                    "language": config.language or document.metadata.get("language"),
+                    "chunk_size": doc_config.chunk_size,
+                    "chunk_overlap": doc_config.chunk_overlap,
+                    "language": doc_config.language or document.metadata.get("language"),
                     "split_timestamp": datetime.utcnow().isoformat(),
                 }
             chunks.extend(split_docs)

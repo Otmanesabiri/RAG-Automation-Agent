@@ -17,7 +17,9 @@ class HashEmbeddings:
     def _embed(self, text: str) -> List[float]:
         vector = [0.0] * self.dimension
         for word in text.lower().split():
-            vector[int(hashlib.md5(word.encode()).hexdigest(), 16) % self.dimension] += 1.0
+            # Non-cryptographic bucketing of words into dimensions (blake2b: fast, stable across runs)
+            bucket = int.from_bytes(hashlib.blake2b(word.encode(), digest_size=8).digest(), "big")
+            vector[bucket % self.dimension] += 1.0
         return vector if any(vector) else [1.0] + [0.0] * (self.dimension - 1)
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:

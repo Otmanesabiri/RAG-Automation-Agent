@@ -27,7 +27,8 @@ class HashEmbeddings:
     def _embed(self, text):
         vector = [0.0] * DIMS
         for word in text.lower().split():
-            vector[int(hashlib.md5(word.encode()).hexdigest(), 16) % DIMS] += 1.0
+            bucket = int.from_bytes(hashlib.blake2b(word.encode(), digest_size=8).digest(), "big")
+            vector[bucket % DIMS] += 1.0
         return vector if any(vector) else [1.0] + [0.0] * (DIMS - 1)
 
     def embed_documents(self, texts):

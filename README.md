@@ -5,9 +5,12 @@ A Retrieval-Augmented Generation service: it ingests documents (PDF, DOCX, TXT, 
 ## Capabilities
 
 - **Ingestion**: file upload (raw or base64) or URL, with SSRF protection; automatic or per-request chunk sizing; re-ingesting a source replaces it instead of duplicating it.
-- **Retrieval**: kNN vector search in Elasticsearch, metadata/age/permission filters, optional cross-encoder re-ranking.
-- **Generation**: anti-hallucination prompt strategies (strict, citation, contradiction, confidence, structured), streamed answers (SSE), conversation memory with follow-up question rewriting.
-- **API**: Flask REST API with API-key auth, per-client rate limiting and sessions (shared through Redis), document management endpoints.
+- **Retrieval**: hybrid BM25 + kNN search fused with RRF, multi-query / HyDE expansion, metadata/age/permission filters, optional cross-encoder re-ranking, structure-aware chunking with section citations.
+- **Generation**: anti-hallucination prompt strategies, streamed answers (SSE), conversation memory with follow-up rewriting, LLM-judge citation checks.
+- **Agent**: `/agent` multi-step research with tools (Claude native tool use, JSON loop for other providers); MCP server for Claude Desktop / Claude Code.
+- **Sources & automations**: connectors (local folder, S3, Confluence) with incremental sync, background jobs, daily digests, topic watches with alerts, schema-based JSON extraction, signed incoming webhooks.
+- **API & security**: API keys or OIDC JWT, roles (reader/editor/admin), tenant isolation, audit log, rate limiting and sessions shared through Redis, chat UI at `/ui` with feedback.
+- **Quality**: reference dataset and nightly evaluation (hit rate, MRR, faithfulness), cost/latency/quality metrics and Grafana dashboard.
 - **Operations**: Prometheus metrics, Grafana dashboards, structured logging, Docker image, CI (tests, lint, security scans), Terraform for AWS staging.
 
 ## Quickstart
@@ -52,8 +55,8 @@ Work is tracked in [GitHub issues](https://github.com/Otmanesabiri/RAG-Automatio
 |----------|-------|--------|
 | P0 | Security: secrets out of Git, auth/rate limit, SSRF, hardened config, current LLM models | Done (#1 still needs key rotation and history purge) |
 | P1 | Reliability: Redis state, bulk indexing, index bootstrap, API params, conversation memory, metrics, tests, pinned dependencies, docs | Done |
-| P2 | RAG quality: hybrid search, multi-query/HyDE, structural chunking, LLM citation check, automatic evaluation, business metrics | Planned (#15–#20) |
-| P3 | Agent features: tool-calling agent, source connectors, multi-tenant RBAC, web UI, MCP server, automations | Planned (#21–#26) |
+| P2 | RAG quality: hybrid search, multi-query/HyDE, structural chunking, LLM citation check, automatic evaluation, business metrics | Done (#17 open for semantic chunking and PDF tables) |
+| P3 | Agent features: tool-calling agent, source connectors, multi-tenant RBAC, web UI, MCP server, automations | Done (#22 open for SharePoint and Google Drive) |
 
 Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
@@ -61,6 +64,7 @@ Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 - [docs/QUICKSTART.md](docs/QUICKSTART.md): local setup, tests, troubleshooting
 - [docs/api.md](docs/api.md): endpoints, streaming, errors
+- [docs/MCP.md](docs/MCP.md): MCP server for Claude Desktop / Claude Code
 - [docs/architecture.md](docs/architecture.md) and [docs/architecture/](docs/architecture/): components and PlantUML diagrams
 - [docs/data-flow.md](docs/data-flow.md): ingestion and query flows
 - [docs/RAG_ENHANCEMENTS.md](docs/RAG_ENHANCEMENTS.md): re-ranking, prompts, filters, citation checks

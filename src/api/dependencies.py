@@ -4,16 +4,22 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from typing import Any
+from typing import Any, Dict
 
 from flask import Flask, current_app
 
+from ..agent import AgentRunner, build_document_tools
+from ..auth import current_principal, search_scope
+from ..automations import Notifier, WatchStore
+from ..connectors import JobManager, SourceConnector, SyncService, SyncStateStore, load_connectors
 from ..embeddings.service import EmbeddingService
 from ..ingestion.config import ChunkingConfig, LoaderConfig
 from ..ingestion.pipeline import IngestionPipeline
 from ..llm.rag_service import RAGService
 from ..llm.service import LLMService
+from ..redis_client import get_redis_client
 from ..vector_store.elasticsearch_store import ElasticsearchVectorStore
+from .feedback import FeedbackStore
 from .state import RedisSessionStore, SessionStore, build_session_store
 
 
@@ -25,6 +31,7 @@ def register_dependencies(app: Flask) -> None:
     app.extensions["vector_store_factory"] = _build_vector_store
     app.extensions["llm_service_factory"] = _build_llm_service
     app.extensions["rag_service_factory"] = _build_rag_service
+    app.extensions["agent_runner_factory"] = _build_agent_runner
 
 
 def get_session_store() -> SessionStore | RedisSessionStore:
@@ -89,6 +96,76 @@ def _build_rag_service() -> RAGService:
 def get_llm_service() -> LLMService:
     factory = current_app.extensions.get("llm_service_factory", _build_llm_service)
     return factory()
+
+
+def get_connectors() -> Dict[str, SourceConnector]:
+    factory = current_app.extensions.get("connectors_factory", _build_connectors)
+    return factory()
+
+
+@lru_cache(maxsize=1)
+def _build_connectors() -> Dict[str, SourceConnector]:
+    return load_connectors()
+
+
+def get_sync_service() -> SyncService:
+    factory = current_app.extensions.get("sync_service_factory", _build_sync_service)
+    return factory()
+
+
+@lru_cache(maxsize=1)
+def _build_sync_service() -> SyncService:
+    return SyncService(_build_pipeline(), _build_vector_store(), SyncStateStore(get_redis_client()))
+
+
+def get_watch_store() -> WatchStore:
+    store = current_app.extensions.get("watch_store")
+    if store is None:
+        store = current_app.extensions["watch_store"] = WatchStore(get_redis_client())
+    return store
+
+
+def get_notifier() -> Notifier:
+    notifier = current_app.extensions.get("notifier")
+    if notifier is None:
+        notifier = current_app.extensions["notifier"] = Notifier()
+    return notifier
+
+
+def get_llm_service_cached() -> LLMService:
+    factory = current_app.extensions.get("llm_service_factory", _build_llm_service)
+    return factory()
+
+
+def get_feedback_store() -> FeedbackStore:
+    store = current_app.extensions.get("feedback_store")
+    if store is None:
+        store = current_app.extensions["feedback_store"] = FeedbackStore(get_redis_client())
+    return store
+
+
+def get_job_manager() -> JobManager:
+    manager = current_app.extensions.get("job_manager")
+    if manager is None:
+        manager = current_app.extensions["job_manager"] = JobManager(get_redis_client())
+    return manager
+
+
+def get_agent_runner() -> AgentRunner:
+    factory = current_app.extensions.get("agent_runner_factory", _build_agent_runner)
+    return factory()
+
+
+@lru_cache(maxsize=1)
+def _build_agent_runner() -> AgentRunner:
+    llm_service = _build_llm_service()
+    registry = build_document_tools(
+        _build_rag_service(),
+        _build_vector_store(),
+        llm_service,
+        scope_provider=lambda: search_scope(current_principal()),
+    )
+    return AgentRunner(llm_service, registry)
 
 
 def get_rag_service() -> RAGService:

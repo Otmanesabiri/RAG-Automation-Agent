@@ -90,9 +90,14 @@ class ElasticsearchVectorStore:
         return True
 
     @staticmethod
-    def document_id_for(source: str) -> str:
-        """Stable id of a source document: re-ingesting the same source replaces it."""
-        return hashlib.sha256(source.encode("utf-8")).hexdigest()[:32]
+    def document_id_for(source: str, tenant: Optional[str] = None) -> str:
+        """Stable id of a source document: re-ingesting the same source replaces it.
+
+        The tenant is part of the id, so two tenants uploading "notes.txt" never
+        overwrite each other's chunks.
+        """
+        key = f"{tenant}\x00{source}" if tenant else source
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
 
     @staticmethod
     def chunk_id_for(document_id: str, index: int, content: str) -> str:
@@ -123,7 +128,7 @@ class ElasticsearchVectorStore:
         ids_by_document: Dict[str, List[str]] = defaultdict(list)
         for position, (doc, embedding) in enumerate(zip(documents, embeddings)):
             source = doc.metadata.get("source", "unknown")
-            document_id = self.document_id_for(source)
+            document_id = self.document_id_for(source, doc.metadata.get("tenant"))
             chunk_index = doc.metadata.get("chunk_index", position)
             chunk_id = self.chunk_id_for(document_id, chunk_index, doc.page_content)
             ids_by_document[document_id].append(chunk_id)
@@ -156,7 +161,21 @@ class ElasticsearchVectorStore:
             conflicts="proceed",
         )
 
-    def list_documents(self, *, size: int = 20, after: Optional[str] = None) -> Dict[str, Any]:
+    def _scoped(
+        self, query: Dict[str, Any], filters: Optional[Dict[str, Any]], user_permissions: Optional[List[str]]
+    ) -> Dict[str, Any]:
+        """Add the caller's mandatory restrictions (tenant, access levels) to a query."""
+        restriction = self._build_advanced_filters(filters=filters, user_permissions=user_permissions)
+        return {"bool": {"filter": [query, restriction]}} if restriction else query
+
+    def list_documents(
+        self,
+        *,
+        size: int = 20,
+        after: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        user_permissions: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         """Page through source documents (one entry per document, not per chunk)."""
         composite: Dict[str, Any] = {"size": size, "sources": [{"document_id": {"terms": {"field": "document_id"}}}]}
         if after:
@@ -164,6 +183,7 @@ class ElasticsearchVectorStore:
         response = self.client.search(
             index=self.index_name,
             size=0,
+            query=self._scoped({"match_all": {}}, filters, user_permissions),
             aggs={
                 "documents": {
                     "composite": composite,
@@ -190,11 +210,17 @@ class ElasticsearchVectorStore:
         next_after = agg.get("after_key", {}).get("document_id") if len(documents) == size else None
         return {"documents": documents, "next": next_after}
 
-    def get_document(self, document_id: str) -> Optional[Dict[str, Any]]:
-        """Return a document with its chunks in order, or None if unknown."""
+    def get_document(
+        self,
+        document_id: str,
+        *,
+        filters: Optional[Dict[str, Any]] = None,
+        user_permissions: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Return a document with its chunks in order, or None if unknown (or not visible to the caller)."""
         response = self.client.search(
             index=self.index_name,
-            query={"term": {"document_id": document_id}},
+            query=self._scoped({"term": {"document_id": document_id}}, filters, user_permissions),
             size=10000,
             _source=["id", "content", "metadata", "source", "created_at"],
         )
@@ -211,11 +237,17 @@ class ElasticsearchVectorStore:
             ],
         }
 
-    def delete_document(self, document_id: str) -> int:
-        """Delete every chunk of a document; returns the number of chunks removed."""
+    def delete_document(
+        self,
+        document_id: str,
+        *,
+        filters: Optional[Dict[str, Any]] = None,
+        user_permissions: Optional[List[str]] = None,
+    ) -> int:
+        """Delete every chunk of a document visible to the caller; returns the number of chunks removed."""
         response = self.client.delete_by_query(
             index=self.index_name,
-            query={"term": {"document_id": document_id}},
+            query=self._scoped({"term": {"document_id": document_id}}, filters, user_permissions),
             refresh=True,
             conflicts="proceed",
         )

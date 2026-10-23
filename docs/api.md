@@ -103,6 +103,14 @@ Sources are declared server-side in the JSON file at `CONNECTORS_CONFIG` (types 
 
 For scheduled syncs, run `python scripts/sync_sources.py [name...]` from cron or a Kubernetes CronJob.
 
+### Automations
+- `POST /automations/digest` (admin) `{"since_hours": 24, "notify": true}`: job that summarises the documents indexed in that window and sends the digest to `NOTIFY_WEBHOOK_URL` / `NOTIFY_EMAIL_TO`.
+- `GET /watches`, `POST /watches` (editor) `{"name", "query", "filters", "min_score"}`, `DELETE /watches/{id}`: saved queries per tenant. `POST /automations/watches/run` (admin) checks them now; each watch alerts on passages indexed since its previous check.
+- `POST /extract` `{"document_id" | "text", "schema": <JSON Schema object>, "instructions"}`: returns `{"data", "valid", "errors", "attempts"}`; the LLM gets one retry with the validation errors.
+- `POST /webhooks/ingest` `{"url"}` or `{"connector"}`: for external systems (CMS, CI). Authenticated with `X-Signature: sha256=<hex HMAC-SHA256 of the raw body with WEBHOOK_SECRET>` instead of an API key; returns a job id.
+
+Schedules: `python scripts/run_automations.py digest --since-hours 24` and `python scripts/run_automations.py watches` from cron.
+
 ### `GET /documents?size=20&after=<document_id>`
 - **Purpose**: List indexed source documents (one entry per document).
 - **Response**: `{"documents": [{"document_id", "source", "mime_type", "chunks", "indexed_at"}], "next": "<cursor or null>"}`

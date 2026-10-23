@@ -77,6 +77,33 @@ class SearchRequest(BaseModel):
     rerank: Optional[bool] = None
 
 
+class WatchRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    query: str = Field(..., min_length=1, max_length=2000)
+    filters: Dict[str, Any] = Field(default_factory=dict)
+    min_score: Optional[float] = Field(None, ge=0)
+
+
+class ExtractRequest(BaseModel):
+    document_id: Optional[str] = None
+    text: Optional[str] = Field(None, max_length=200000)
+    json_schema: Dict[str, Any] = Field(..., alias="schema")
+    instructions: str = Field("", max_length=2000)
+
+    model_config = {"populate_by_name": True}
+
+    @model_validator(mode="after")
+    def check_source(self) -> "ExtractRequest":
+        if bool(self.document_id) == bool(self.text):
+            raise ValueError("Provide exactly one of document_id or text")
+        return self
+
+
+class DigestRequest(BaseModel):
+    since_hours: int = Field(24, ge=1, le=24 * 31)
+    notify: bool = True
+
+
 class FeedbackRequest(BaseModel):
     rating: Literal["up", "down"]
     session_id: Optional[str] = None

@@ -54,13 +54,14 @@ def store():
 
 def _chunks(source, texts, **metadata):
     return [
-        SimpleNamespace(page_content=t, metadata={"source": source, "chunk_index": i, **metadata})
-        for i, t in enumerate(texts)
+        SimpleNamespace(page_content=t, metadata={"source": source, "chunk_index": i, **metadata}) for i, t in enumerate(texts)
     ]
 
 
 def test_index_search_and_document_lifecycle(store):
-    store.add_documents(_chunks("geo.txt", ["paris is the capital of france", "berlin is the capital of germany"], category="geo"))
+    store.add_documents(
+        _chunks("geo.txt", ["paris is the capital of france", "berlin is the capital of germany"], category="geo")
+    )
     store.add_documents(_chunks("ml.txt", ["machine learning trains models on data"], category="ml"))
 
     results = store.similarity_search("capital of france", k=1)
@@ -84,3 +85,12 @@ def test_index_search_and_document_lifecycle(store):
 
 def test_ensure_index_is_idempotent(store):
     assert store.ensure_index() is False
+
+
+def test_hybrid_search_finds_exact_terms(store):
+    store.add_documents(_chunks("codes.txt", ["error code XK-4471 means the disk is full", "general maintenance notes"]))
+    store.add_documents(_chunks("other.txt", ["the printer is out of paper"]))
+
+    for mode in ("sparse", "hybrid"):
+        results = store.similarity_search("XK-4471", k=1, mode=mode)
+        assert results[0]["content"].startswith("error code XK-4471"), mode

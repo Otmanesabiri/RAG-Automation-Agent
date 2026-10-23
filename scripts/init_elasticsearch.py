@@ -24,9 +24,13 @@ from src.vector_store.elasticsearch_store import ElasticsearchVectorStore  # noq
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Initialize Elasticsearch indices for the RAG Automation Agent")
     parser.add_argument("--index", default=os.getenv("ELASTICSEARCH_INDEX", "rag_documents"), help="Index name to create")
-    parser.add_argument("--url", default=os.getenv("ELASTICSEARCH_URL", "http://localhost:9200"), help="Elasticsearch endpoint URL")
+    parser.add_argument(
+        "--url", default=os.getenv("ELASTICSEARCH_URL", "http://localhost:9200"), help="Elasticsearch endpoint URL"
+    )
     parser.add_argument("--username", default=os.getenv("ELASTICSEARCH_USERNAME", "elastic"), help="Elasticsearch username")
-    parser.add_argument("--password", default=os.getenv("ELASTICSEARCH_PASSWORD", os.getenv("ELASTIC_PASSWORD")), help="Elasticsearch password")
+    parser.add_argument(
+        "--password", default=os.getenv("ELASTICSEARCH_PASSWORD", os.getenv("ELASTIC_PASSWORD")), help="Elasticsearch password"
+    )
     parser.add_argument("--delete", action="store_true", help="Delete the index instead of creating it")
     return parser.parse_args()
 

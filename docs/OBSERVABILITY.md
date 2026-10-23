@@ -77,6 +77,24 @@ histogram_quantile(0.95, rate(rag_agent_request_duration_seconds_bucket[5m]))
 rate(rag_agent_requests_total{status=~"5.."}[5m])
 ```
 
+### Quality and cost metrics
+
+| Metric | Type | Labels | Meaning |
+|--------|------|--------|---------|
+| `rag_agent_llm_tokens_total` | Counter | provider, model, kind (input/output) | Tokens reported by the LLM provider (JSON and streamed answers) |
+| `rag_agent_llm_cost_usd_total` | Counter | provider, model | Estimated spend; built-in prices for current Claude models, others via `LLM_PRICES` |
+| `rag_agent_stage_duration_seconds` | Histogram | stage | `query_rewrite`, `retrieval`, `embedding`, `rerank`, `generation`, `citation_check` |
+| `rag_agent_answers_total` | Counter | outcome (answered / no_information) | Answers where the model said the documents lack the information |
+| `rag_agent_sources_per_answer` | Histogram | | Chunks given to the LLM |
+| `rag_agent_citation_confidence` | Histogram | mode | Share of claims supported by the sources (when citation checks run) |
+| `rag_agent_ungrounded_answers_total` | Counter | mode | Answers below the grounding threshold |
+
+The **RAG Quality & Cost** Grafana dashboard (`configs/grafana/dashboards/rag-quality-cost.json`) charts them, and the `LowCitationConfidence` alert fires when average confidence stays under 70%.
+
+### Tracing (OpenTelemetry)
+
+Install `requirements-extras.txt` and set `OTEL_EXPORTER_OTLP_ENDPOINT` (OTLP/HTTP, e.g. `http://localhost:4318`). Flask requests are traced, and each pipeline stage above is a child span (`rag.retrieval`, `rag.generation`, ...). Without the variable, tracing is off and costs nothing.
+
 ---
 
 ## Structured Logging

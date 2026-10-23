@@ -10,7 +10,7 @@ from typing import List, Optional
 
 class PromptTemplate:
     """Base class for prompt templates."""
-    
+
     def format(self, **kwargs) -> str:
         """Format the prompt with provided variables."""
         raise NotImplementedError
@@ -19,14 +19,14 @@ class PromptTemplate:
 class StrictRAGPrompt(PromptTemplate):
     """
     Strict RAG prompt that enforces grounding in source documents.
-    
+
     Features:
     - Explicit rules against hallucination
     - Citation requirements
     - Handling of contradictions
     - Clear "I don't know" instructions
     """
-    
+
     TEMPLATE = """You are a helpful AI assistant that answers questions based ONLY on the provided context.
 
 STRICT RULES - YOU MUST FOLLOW THESE:
@@ -52,10 +52,10 @@ ANSWER (following all rules above):"""
 class CitationEnforcedPrompt(PromptTemplate):
     """
     Prompt that requires inline citations for every claim.
-    
+
     Best for: Legal, medical, financial domains where accuracy is critical.
     """
-    
+
     TEMPLATE = """You are a precise AI assistant that provides well-cited answers.
 
 YOUR TASK:
@@ -79,36 +79,28 @@ QUESTION: {query}
 
 YOUR CITED ANSWER:"""
 
-    def format(
-        self,
-        query: str,
-        sources: List[dict],
-        **kwargs
-    ) -> str:
+    def format(self, query: str, sources: List[dict], **kwargs) -> str:
         """Format with numbered sources."""
         sources_formatted = self._format_sources(sources)
-        return self.TEMPLATE.format(
-            query=query,
-            sources_formatted=sources_formatted
-        )
-    
+        return self.TEMPLATE.format(query=query, sources_formatted=sources_formatted)
+
     def _format_sources(self, sources: List[dict]) -> str:
         """Format sources with numbers for citation."""
         formatted = []
         for idx, source in enumerate(sources, 1):
-            content = source.get('content', '') or source.get('snippet', '')
-            source_name = source.get('source', 'unknown')
+            content = source.get("content", "") or source.get("snippet", "")
+            source_name = source.get("source", "unknown")
             formatted.append(f"[Source {idx}] ({source_name}):\n{content}\n")
-        return '\n'.join(formatted)
+        return "\n".join(formatted)
 
 
 class ContradictionHandlingPrompt(PromptTemplate):
     """
     Prompt designed to handle contradictory information in sources.
-    
+
     Useful when: Multiple documents may have conflicting information.
     """
-    
+
     TEMPLATE = """You are a critical-thinking AI assistant that analyzes information carefully.
 
 YOUR TASK:
@@ -146,10 +138,10 @@ ANALYSIS AND ANSWER:"""
 class ConfidenceAwarePrompt(PromptTemplate):
     """
     Prompt that asks LLM to express confidence levels.
-    
+
     Helps users understand answer reliability.
     """
-    
+
     TEMPLATE = """You are an honest AI assistant that expresses uncertainty when appropriate.
 
 YOUR TASK:
@@ -185,10 +177,10 @@ YOUR RESPONSE:"""
 class StructuredRAGPrompt(PromptTemplate):
     """
     Prompt that requests structured output (JSON-like format).
-    
+
     Useful for: API responses, structured data extraction.
     """
-    
+
     TEMPLATE = """You are an AI assistant that provides structured, well-formatted answers.
 
 YOUR TASK:
@@ -221,92 +213,81 @@ STRUCTURED ANSWER:"""
 class PromptBuilder:
     """
     Factory for creating and customizing prompts.
-    
+
     Makes it easy to select and configure the right prompt for each use case.
     """
-    
+
     PROMPT_TYPES = {
-        'strict': StrictRAGPrompt,
-        'citation': CitationEnforcedPrompt,
-        'contradiction': ContradictionHandlingPrompt,
-        'confidence': ConfidenceAwarePrompt,
-        'structured': StructuredRAGPrompt
+        "strict": StrictRAGPrompt,
+        "citation": CitationEnforcedPrompt,
+        "contradiction": ContradictionHandlingPrompt,
+        "confidence": ConfidenceAwarePrompt,
+        "structured": StructuredRAGPrompt,
     }
-    
+
     @classmethod
-    def get_prompt(
-        cls,
-        prompt_type: str = 'strict',
-        **kwargs
-    ) -> PromptTemplate:
+    def get_prompt(cls, prompt_type: str = "strict", **kwargs) -> PromptTemplate:
         """
         Get a prompt template by type.
-        
+
         Args:
-            prompt_type: One of 'strict', 'citation', 'contradiction', 
+            prompt_type: One of 'strict', 'citation', 'contradiction',
                         'confidence', 'structured'
             **kwargs: Additional prompt configuration
-        
+
         Returns:
             PromptTemplate instance
         """
         if prompt_type not in cls.PROMPT_TYPES:
-            raise ValueError(
-                f"Unknown prompt type: {prompt_type}. "
-                f"Available: {list(cls.PROMPT_TYPES.keys())}"
-            )
-        
+            raise ValueError(f"Unknown prompt type: {prompt_type}. " f"Available: {list(cls.PROMPT_TYPES.keys())}")
+
         return cls.PROMPT_TYPES[prompt_type]()
-    
+
     @classmethod
     def create_custom_prompt(
-        cls,
-        system_message: str,
-        context_template: str = "{context}",
-        query_template: str = "{query}"
+        cls, system_message: str, context_template: str = "{context}", query_template: str = "{query}"
     ) -> PromptTemplate:
         """
         Create a custom prompt template.
-        
+
         Args:
             system_message: Instructions for the AI
             context_template: How to format context
             query_template: How to format query
-        
+
         Returns:
             Custom PromptTemplate
         """
+
         class CustomPrompt(PromptTemplate):
             def format(self, query: str, context: str, **kwargs) -> str:
-                return f"{system_message}\n\n{context_template.format(context=context)}\n\n{query_template.format(query=query)}"
-        
+                return (
+                    f"{system_message}\n\n{context_template.format(context=context)}\n\n{query_template.format(query=query)}"
+                )
+
         return CustomPrompt()
 
 
 # Convenience function
 def build_prompt(
-    prompt_type: str = 'strict',
-    query: str = '',
-    context: str = '',
-    sources: Optional[List[dict]] = None,
-    **kwargs
+    prompt_type: str = "strict", query: str = "", context: str = "", sources: Optional[List[dict]] = None, **kwargs
 ) -> str:
     """
     Build a complete prompt in one call.
-    
+
     Args:
         prompt_type: Type of prompt to use
         query: User query
         context: Retrieved context (for most prompts)
         sources: Source documents (for citation prompt)
         **kwargs: Additional formatting arguments
-    
+
     Returns:
         Formatted prompt string
     """
     prompt_template = PromptBuilder.get_prompt(prompt_type)
-    
-    if prompt_type == 'citation' and sources:
+
+    if prompt_type == "citation" and sources:
         return prompt_template.format(query=query, sources=sources, **kwargs)
     else:
         return prompt_template.format(query=query, context=context, **kwargs)

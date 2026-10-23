@@ -83,7 +83,9 @@ def test_list_documents_paginates(store):
                     {
                         "key": {"document_id": "d1"},
                         "doc_count": 3,
-                        "sample": {"hits": {"hits": [{"_source": {"source": "a.txt", "metadata": {"mime_type": "text/plain"}}}]}},
+                        "sample": {
+                            "hits": {"hits": [{"_source": {"source": "a.txt", "metadata": {"mime_type": "text/plain"}}}]}
+                        },
                         "last_indexed": {"value_as_string": "2026-01-01T00:00:00Z"},
                     }
                 ],
@@ -120,6 +122,7 @@ def test_document_endpoints(client, auth_headers):
 def test_document_endpoints_require_auth(client):
     assert client.get("/documents").status_code == 401
     assert client.delete("/documents/x").status_code == 401
+
 
 class _DimEmbeddings(_Embeddings):
     def __init__(self, dims, name="model-x"):
@@ -168,3 +171,56 @@ def test_health_ok(client):
     response = client.get("/health")
     assert response.status_code == 200
     assert response.get_json()["status"] == "ok"
+
+
+def test_reciprocal_rank_fusion_rewards_hits_in_both_lists():
+    from src.vector_store.elasticsearch_store import reciprocal_rank_fusion
+
+    dense = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
+    sparse = [{"id": "c"}, {"id": "d"}]
+    fused = reciprocal_rank_fusion([dense, sparse], k=3)
+    # b and d tie (both rank 2); ties keep the order of the first list
+    assert [hit["id"] for hit in fused] == ["c", "a", "b"]
+    assert fused[0]["score"] == pytest.approx(1 / 63 + 1 / 61)
+
+
+def _hit(chunk_id):
+    return {"_id": chunk_id, "_score": 1.0, "_source": {"id": chunk_id, "content": chunk_id, "metadata": {}, "source": "s"}}
+
+
+def test_search_modes_issue_the_right_queries(store, monkeypatch):
+    store.embedding_service.embed_query = lambda text: [0.1]
+    store.client.search.side_effect = lambda index, body: {"hits": {"hits": [_hit("x")]}}
+
+    store.similarity_search("q", k=2, mode="dense", filters={"team": "a"})
+    body = store.client.search.call_args.kwargs["body"]
+    assert body["knn"]["filter"] == {"bool": {"must": [{"term": {"metadata.team": "a"}}]}}
+
+    store.similarity_search("q", k=2, mode="sparse", filters={"team": "a"})
+    body = store.client.search.call_args.kwargs["body"]
+    assert body["query"]["bool"]["must"] == [{"match": {"content": {"query": "q"}}}]
+    assert body["query"]["bool"]["filter"] == [{"bool": {"must": [{"term": {"metadata.team": "a"}}]}}]
+
+    store.client.search.reset_mock()
+    results = store.similarity_search("q", k=2, mode="hybrid")
+    assert store.client.search.call_count == 2
+    assert [r["id"] for r in results] == ["x"]
+
+
+def test_default_mode_comes_from_env(store, monkeypatch):
+    store.embedding_service.embed_query = lambda text: [0.1]
+    store.client.search.side_effect = lambda index, body: {"hits": {"hits": []}}
+    monkeypatch.setenv("SEARCH_MODE", "sparse")
+    store.similarity_search("q", k=2)
+    assert "query" in store.client.search.call_args.kwargs["body"]
+
+
+def test_unknown_mode_is_rejected(store):
+    with pytest.raises(ValueError):
+        store.similarity_search("q", mode="magic")
+
+
+def test_search_mode_is_forwarded_by_the_api(client, auth_headers, fakes):
+    client.post("/query", json={"query": "q", "search_mode": "sparse"}, headers=auth_headers)
+    assert fakes["rag_service"].calls[-1]["search_mode"] == "sparse"
+    assert client.post("/query", json={"query": "q", "search_mode": "x"}, headers=auth_headers).status_code == 422

@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAG Assistant</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #667085; --border: #e3e6eb;
+    --accent: #2f6fde; --accent-text: #ffffff; --user: #eaf1fe; --error: #b42318; --ok: #067647;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #11151c; --panel: #1a2030; --text: #e6e9ef; --muted: #98a2b3; --border: #2c3445;
+            --accent: #6b9bff; --accent-text: #0b1020; --user: #22304d; --error: #f97066; --ok: #47cd89; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  header h1 { font-size: 17px; margin: 0 auto 0 0; }
+  input, select, textarea, button { font: inherit; color: inherit; }
+  input, select, textarea { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; }
+  button { border: 0; border-radius: 8px; padding: 8px 14px; background: var(--accent); color: var(--accent-text); cursor: pointer; }
+  button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); padding: 4px 9px; }
+  button:disabled { opacity: .5; cursor: default; }
+  main { max-width: 860px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; min-height: calc(100vh - 140px); }
+  .msg { padding: 12px 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--border); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.user { background: var(--user); align-self: flex-end; max-width: 85%; }
+  .msg.error { color: var(--error); }
+  .sources { margin-top: 10px; display: grid; gap: 6px; }
+  .source { font-size: 13px; color: var(--muted); border-left: 3px solid var(--border); padding-left: 8px; white-space: normal; }
+  .source b { color: var(--text); }
+  .meta { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+  .meta .thanks { color: var(--ok); }
+  form#ask { position: sticky; bottom: 0; display: flex; gap: 8px; padding: 12px 16px; background: var(--bg); border-top: 1px solid var(--border); max-width: 860px; margin: 0 auto; }
+  form#ask textarea { flex: 1; resize: vertical; min-height: 44px; }
+  #upload-status { font-size: 13px; color: var(--muted); }
+  @media (max-width: 600px) { header { padding: 10px 16px; } .msg.user { max-width: 100%; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>RAG Assistant</h1>
+  <input id="api-key" type="password" placeholder="Clé API" autocomplete="off" aria-label="Clé API">
+  <select id="mode" aria-label="Mode">
+    <option value="query">Réponse directe</option>
+    <option value="agent">Recherche approfondie (agent)</option>
+  </select>
+  <label><input type="file" id="file" hidden><button type="button" class="ghost" id="upload-btn">Ajouter un document</button></label>
+  <span id="upload-status" role="status"></span>
+</header>
+
+<main id="chat" aria-live="polite"></main>
+
+<form id="ask">
+  <textarea id="question" placeholder="Posez une question sur vos documents…" required></textarea>
+  <button id="send">Envoyer</button>
+</form>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const chat = $("chat"), keyInput = $("api-key");
+  let sessionId = null;
+
+  try { keyInput.value = sessionStorage.getItem("rag-api-key") || ""; } catch (e) {}
+  keyInput.addEventListener("change", () => { try { sessionStorage.setItem("rag-api-key", keyInput.value); } catch (e) {} });
+
+  const headers = () => {
+    const key = keyInput.value.trim();
+    const h = { "Content-Type": "application/json" };
+    if (key.split(".").length === 3) h["Authorization"] = "Bearer " + key; else if (key) h["X-API-Key"] = key;
+    return h;
+  };
+
+  function bubble(cls, text) {
+    const div = document.createElement("div");
+    div.className = "msg " + cls;
+    const body = document.createElement("div");
+    body.textContent = text;  // textContent only: answers and sources are untrusted
+    div.appendChild(body);
+    chat.appendChild(div);
+    div.scrollIntoView({ block: "end" });
+    return { div, body };
+  }
+
+  function renderSources(div, sources) {
+    if (!sources || !sources.length) return;
+    const box = document.createElement("div");
+    box.className = "sources";
+    sources.forEach((s, i) => {
+      const item = document.createElement("div");
+      item.className = "source";
+      const title = document.createElement("b");
+      title.textContent = `[${i + 1}] ${s.source || "source"}`;
+      item.appendChild(title);
+      item.appendChild(document.createTextNode(" " + (s.snippet || "").slice(0, 240)));
+      box.appendChild(item);
+    });
+    div.appendChild(box);
+  }
+
+  function renderFeedback(div, question, answer) {
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const send = async (rating) => {
+      const comment = rating === "down" ? (prompt("Qu'est-ce qui n'allait pas ? (facultatif)") || "") : "";
+      const res = await fetch("/feedback", { method: "POST", headers: headers(),
+        body: JSON.stringify({ session_id: sessionId, question, answer, rating, comment }) });
+      meta.replaceChildren(Object.assign(document.createElement("span"),
+        { className: res.ok ? "thanks" : "", textContent: res.ok ? "Merci pour votre retour." : "Retour non enregistré." }));
+    };
+    for (const [rating, label] of [["up", "👍"], ["down", "👎"]]) {
+      const b = Object.assign(document.createElement("button"), { type: "button", className: "ghost", textContent: label });
+      b.setAttribute("aria-label", rating === "up" ? "Réponse utile" : "Réponse pas utile");
+      b.onclick = () => send(rating);
+      meta.appendChild(b);
+    }
+    div.appendChild(meta);
+  }
+
+  async function errorText(res) {
+    try { const data = await res.json(); return data.error?.message || res.statusText; } catch (e) { return res.statusText; }
+  }
+
+  async function askStreaming(question, out) {
+    const res = await fetch("/query", { method: "POST", headers: headers(),
+      body: JSON.stringify({ query: question, session_id: sessionId, stream: true }) });
+    if (!res.ok) throw new Error(await errorText(res));
+    const reader = res.body.getReader(), decoder = new TextDecoder();
+    let buffer = "", answer = "", sources = [];
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sep;
+      while ((sep = buffer.indexOf("\n\n")) >= 0) {
+        const block = buffer.slice(0, sep); buffer = buffer.slice(sep + 2);
+        const event = (block.match(/^event: (.*)$/m) || [])[1];
+        const data = JSON.parse((block.match(/^data: (.*)$/m) || [])[1] || "null");
+        if (event === "sources") sources = data;
+        else if (event === "token") { answer += data; out.body.textContent = answer; }
+        else if (event === "done") { sessionId = data.metadata.session_id; answer = data.answer; out.body.textContent = answer; }
+        else if (event === "error") throw new Error(data.message);
+      }
+    }
+    return { answer, sources };
+  }
+
+  async function askAgent(question, out) {
+    out.body.textContent = "Recherche en cours…";
+    const res = await fetch("/agent", { method: "POST", headers: headers(),
+      body: JSON.stringify({ question, session_id: sessionId }) });
+    if (!res.ok) throw new Error(await errorText(res));
+    const data = await res.json();
+    sessionId = data.session_id;
+    out.body.textContent = data.answer;
+    const steps = (data.steps || []).map((s) => ({ source: s.tool, snippet: JSON.stringify(s.input) }));
+    return { answer: data.answer, sources: steps };
+  }
+
+  $("ask").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const question = $("question").value.trim();
+    if (!question) return;
+    $("question").value = "";
+    $("send").disabled = true;
+    bubble("user", question);
+    const out = bubble("assistant", "…");
+    try {
+      const { answer, sources } = $("mode").value === "agent" ? await askAgent(question, out) : await askStreaming(question, out);
+      renderSources(out.div, sources);
+      renderFeedback(out.div, question, answer);
+    } catch (err) {
+      out.div.classList.add("error");
+      out.body.textContent = "Erreur : " + err.message;
+    } finally {
+      $("send").disabled = false;
+      $("question").focus();
+    }
+  });
+
+  $("question").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("ask").requestSubmit(); }
+  });
+
+  $("upload-btn").addEventListener("click", () => $("file").click());
+  $("file").addEventListener("change", async () => {
+    const file = $("file").files[0];
+    if (!file) return;
+    const status = $("upload-status");
+    status.textContent = "Import de " + file.name + "…";
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    const res = await fetch("/ingest", { method: "POST", headers: headers(), body: JSON.stringify({
+      source: "upload", documents: [{ content: btoa(binary), base64_encoded: true, filename: file.name }] }) });
+    status.textContent = res.ok ? `${file.name} indexé.` : "Échec de l'import : " + await errorText(res);
+    $("file").value = "";
+  });
+})();
+</script>
+</body>
+</html>

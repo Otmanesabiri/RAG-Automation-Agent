@@ -12,6 +12,10 @@ on:
 jobs:
   security:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write  # PR comment with the scan summary
+      security-events: write  # Semgrep / SARIF uploads
 
     steps:
     - name: Checkout code
@@ -55,8 +59,11 @@ jobs:
           p/python
           p/flask
 
+    # Needs the repository's Dependency graph (Settings > Code security); until it is
+    # enabled the step reports a warning instead of failing every pull request.
     - name: Dependency Review
       if: github.event_name == 'pull_request'
+      continue-on-error: true
       uses: actions/dependency-review-action@v5
       with:
         fail-on-severity: moderate

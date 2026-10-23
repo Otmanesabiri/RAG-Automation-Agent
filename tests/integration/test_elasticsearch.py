@@ -37,14 +37,22 @@ class HashEmbeddings:
         return self._embed(text)
 
 
+def _unreachable(reason: str):
+    # In CI (REQUIRE_ELASTICSEARCH=true) an unreachable cluster is a failure, not a skip:
+    # an incompatible client once made these tests silently skip while CI stayed green.
+    if os.getenv("REQUIRE_ELASTICSEARCH", "false").lower() == "true":
+        pytest.fail(f"Elasticsearch is required but not reachable: {reason}")
+    pytest.skip(f"Elasticsearch is not reachable: {reason}")
+
+
 @pytest.fixture
 def store():
     client = create_es_client()
     try:
         if not client.options(request_timeout=2, max_retries=0).ping():
-            pytest.skip("Elasticsearch is not reachable")
-    except Exception:
-        pytest.skip("Elasticsearch is not reachable")
+            _unreachable("ping failed")
+    except Exception as exc:
+        _unreachable(f"{type(exc).__name__}: {exc}")
     index = f"test-rag-{uuid.uuid4().hex[:8]}"
     store = ElasticsearchVectorStore(index, HashEmbeddings(), client=client, refresh="true")
     store.ensure_index()

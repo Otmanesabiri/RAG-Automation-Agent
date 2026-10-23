@@ -10,6 +10,7 @@ from flask import Flask, current_app
 
 from ..agent import AgentRunner, build_document_tools
 from ..auth import current_principal, search_scope
+from ..automations import Notifier, WatchStore
 from ..connectors import JobManager, SourceConnector, SyncService, SyncStateStore, load_connectors
 from ..embeddings.service import EmbeddingService
 from ..ingestion.config import ChunkingConfig, LoaderConfig
@@ -115,6 +116,25 @@ def get_sync_service() -> SyncService:
 @lru_cache(maxsize=1)
 def _build_sync_service() -> SyncService:
     return SyncService(_build_pipeline(), _build_vector_store(), SyncStateStore(get_redis_client()))
+
+
+def get_watch_store() -> WatchStore:
+    store = current_app.extensions.get("watch_store")
+    if store is None:
+        store = current_app.extensions["watch_store"] = WatchStore(get_redis_client())
+    return store
+
+
+def get_notifier() -> Notifier:
+    notifier = current_app.extensions.get("notifier")
+    if notifier is None:
+        notifier = current_app.extensions["notifier"] = Notifier()
+    return notifier
+
+
+def get_llm_service_cached() -> LLMService:
+    factory = current_app.extensions.get("llm_service_factory", _build_llm_service)
+    return factory()
 
 
 def get_feedback_store() -> FeedbackStore:

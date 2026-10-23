@@ -71,6 +71,7 @@ jobs:
     - name: Run integration tests (Elasticsearch)
       env:
         ELASTICSEARCH_URL: http://localhost:9200
+        REQUIRE_ELASTICSEARCH: "true"
       run: |
         pytest -m integration \
           --cov=src \

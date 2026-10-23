@@ -1,14 +1,9 @@
 version: 2
 updates:
-  # Bumps pins in requirements.txt (regenerate with uv from requirements.in when needed)
-  - package-ecosystem: pip
-    directory: /
-    schedule:
-      interval: weekly
-    groups:
-      python-minor:
-        update-types: [minor, patch]
-    open-pull-requests-limit: 5
+  # No pip updates: Dependabot rewrites requirements.txt without the constraints of
+  # requirements.in or the CPU-only torch backend (it once upgraded the Elasticsearch
+  # client to a major the 8.x cluster rejects and brought back the CUDA wheels).
+  # Update Python dependencies by regenerating the lock (command in requirements.in).
 
   - package-ecosystem: docker
     directory: /

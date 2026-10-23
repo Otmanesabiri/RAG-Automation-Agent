@@ -22,7 +22,8 @@ sentence-transformers>=3.0.1
 torch>=2.3.0
 
 # --- Data layer ---
-elasticsearch>=9.5.1,<10
+# Client major must match the server (Elasticsearch 8.x): a 9.x client cannot talk to an 8.x cluster
+elasticsearch>=8.14.0,<9
 redis>=5.0.0
 
 # --- API ---

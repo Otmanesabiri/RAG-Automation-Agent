@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import base64
 import json
+from pathlib import Path
 from typing import Any, Dict
 
-from flask import Blueprint, Response, current_app, jsonify, request, stream_with_context
+from flask import Blueprint, Response, current_app, jsonify, request, send_from_directory, stream_with_context
 from pydantic import ValidationError
 
 from ..auth import current_client_id, current_principal, rate_limit, require_api_key, require_role, search_scope
@@ -17,6 +18,7 @@ from ..observability.audit import audit
 from .dependencies import (
     get_agent_runner,
     get_connectors,
+    get_feedback_store,
     get_ingestion_pipeline,
     get_job_manager,
     get_rag_service,
@@ -27,14 +29,17 @@ from .dependencies import (
 from .schemas import (
     AgentRequest,
     ErrorResponse,
+    FeedbackRequest,
     IngestRequest,
     QueryRequest,
     QueryResponse,
+    SearchRequest,
     SessionCreateRequest,
     SessionResponse,
 )
 
 api_bp = Blueprint("api", __name__)
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 logger = get_logger(__name__)
 
 
@@ -270,6 +275,40 @@ def query_documents() -> Response:
     return jsonify(response.model_dump())
 
 
+@api_bp.route("/search", methods=["POST"])
+@require_api_key
+@rate_limit
+def search_documents() -> Response:
+    """Retrieval only (no LLM): the passages /query would give to the model."""
+    payload = _parse_payload(SearchRequest)
+    scope_filters, levels = search_scope(current_principal())
+    filters = {**(payload.filters.attributes or {}), **scope_filters} or None
+    results, reranked = get_rag_service().retrieve(
+        payload.query,
+        top_k=payload.top_k,
+        filters=filters,
+        user_permissions=levels,
+        rerank=payload.rerank,
+        search_mode=payload.search_mode,
+    )
+    return jsonify(
+        {
+            "results": [
+                {
+                    "chunk_id": r["id"],
+                    "document_id": r.get("document_id"),
+                    "source": r.get("source"),
+                    "section": (r.get("metadata") or {}).get("section"),
+                    "score": r.get("score"),
+                    "content": r.get("content"),
+                }
+                for r in results
+            ],
+            "reranked": reranked,
+        }
+    )
+
+
 @api_bp.route("/agent", methods=["POST"])
 @require_api_key
 @rate_limit
@@ -296,6 +335,47 @@ def run_agent() -> Response:
     session_store.append_message(session_id, "assistant", result.answer)
     logger.info(f"Agent finished in {result.iterations} iteration(s), {len(result.steps)} tool call(s)")
     return jsonify({**result.as_dict(), "session_id": session_id})
+
+
+@api_bp.route("/ui", methods=["GET"])
+def chat_ui() -> Response:
+    """Single-page chat interface (the API key is entered in the page)."""
+    response = send_from_directory(STATIC_DIR, "index.html")
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'"
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@api_bp.route("/feedback", methods=["POST"])
+@require_api_key
+@rate_limit
+def add_feedback() -> Response:
+    payload = _parse_payload(FeedbackRequest)
+    principal = current_principal()
+    entry = get_feedback_store().add(
+        {
+            **payload.model_dump(),
+            "client_id": current_client_id(),
+            "tenant": principal.tenant if principal else None,
+        }
+    )
+    return jsonify({"status": "recorded", "created_at": entry["created_at"]}), 201
+
+
+@api_bp.route("/feedback", methods=["GET"])
+@require_api_key
+@require_role("admin")
+@rate_limit
+def list_feedback() -> Response:
+    try:
+        limit = min(max(int(request.args.get("limit", 50)), 1), 500)
+    except ValueError:
+        limit = 50
+    principal = current_principal()
+    tenant = principal.tenant if principal and multi_tenant_enabled() else None
+    return jsonify({"feedback": get_feedback_store().recent(limit, tenant=tenant)})
 
 
 @api_bp.route("/sessions", methods=["POST"])
@@ -407,6 +487,7 @@ class _ValidationException(Exception):
         self.status_code = status_code
 
 
-@api_bp.errorhandler(_ValidationException)
+# App-wide, so every blueprint using _parse_payload gets JSON 4xx responses
+@api_bp.app_errorhandler(_ValidationException)
 def handle_validation_exception(error: _ValidationException):  # pragma: no cover - blueprint scoped handler
     return error.response, error.status_code

@@ -22,8 +22,24 @@
 - Pinned dependency lock with CPU-only PyTorch, multi-stage Docker image, `unstructured` optional (#13).
 - Documentation consolidated: single quickstart, updated README and API reference, phase reports moved to `docs/history/` (#14).
 
+### Added (RAG quality and agent features)
+- Hybrid BM25 + kNN retrieval with Reciprocal Rank Fusion, `search_mode` (#15).
+- Multi-query and HyDE query expansion (#16).
+- Structure-aware chunking (Markdown/HTML sections), page numbers, OCR fallback for scanned PDFs (#17, partial).
+- LLM-judge citation verification with confidence metrics and alert (#18).
+- Reference evaluation dataset, `scripts/evaluate.py` and nightly RAG Evaluation workflow (#19).
+- LLM tokens and cost, per-stage latency, no-information rate, Grafana « RAG Quality & Cost », optional OpenTelemetry (#20).
+- `/agent` tool-calling agent (#21).
+- Connectors (local, S3, Confluence), incremental sync, background jobs, `?async=true` ingestion (#22, partial).
+- JWT/OIDC identity, roles, multi-tenancy, audit log (#23).
+- Chat UI at `/ui` and answer feedback (#24).
+- MCP server and `POST /search` (#25).
+- Digests, watches, `POST /extract`, signed webhooks (#26).
+
 ### Fixed
 - Ingestion and embedding-token Prometheus metrics were never incremented (#11).
 - Uploaded documents were cited under a random temp path; temp file descriptors leaked.
 - Validation errors from custom validators returned 500.
 - Re-ranked sources lost their chunk ids.
+- Text files were decoded with the platform encoding (cp1252 on Windows), hiding accented documents from search.
+- The PR coverage comment step failed on every pull request; `mcp` was missing from the test dependencies.

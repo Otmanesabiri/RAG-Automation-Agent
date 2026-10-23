@@ -80,6 +80,11 @@ Roles: `reader` (query, agent, read documents), `editor` (+ ingest), `admin` (+ 
 - **Streaming** (`"stream": true`): the response is `text/event-stream` with events
   `sources` (list of sources), `token` (text chunk, repeated), then `done` (`{"answer", "metadata"}`), or `error` if generation fails mid-stream.
 
+### `POST /search`
+- **Purpose**: retrieval only (no LLM call): the passages `/query` would give to the model.
+- **Payload**: `{"query": "...", "top_k": 5, "search_mode": "hybrid", "rerank": null, "filters": {"attributes": {}}}`
+- **Response**: `{"results": [{"chunk_id", "document_id", "source", "section", "score", "content"}], "reranked": false}`. Tenant and access-level restrictions apply.
+
 ### `POST /agent`
 - **Purpose**: multi-step research. The LLM chooses tools (`search_documents`, `get_document`, `list_sources`, `summarize_document`) until it can answer; useful for comparisons and multi-part questions. Uses Claude's native tool use with `LLM_PROVIDER=anthropic`, a JSON action loop with other providers.
 - **Payload**: `{"question": "Compare the refund and shipping policies", "session_id": "optional", "max_iterations": 6}` (1-15, default `AGENT_MAX_ITERATIONS`).
@@ -98,6 +103,14 @@ Sources are declared server-side in the JSON file at `CONNECTORS_CONFIG` (types 
 
 For scheduled syncs, run `python scripts/sync_sources.py [name...]` from cron or a Kubernetes CronJob.
 
+### Automations
+- `POST /automations/digest` (admin) `{"since_hours": 24, "notify": true}`: job that summarises the documents indexed in that window and sends the digest to `NOTIFY_WEBHOOK_URL` / `NOTIFY_EMAIL_TO`.
+- `GET /watches`, `POST /watches` (editor) `{"name", "query", "filters", "min_score"}`, `DELETE /watches/{id}`: saved queries per tenant. `POST /automations/watches/run` (admin) checks them now; each watch alerts on passages indexed since its previous check.
+- `POST /extract` `{"document_id" | "text", "schema": <JSON Schema object>, "instructions"}`: returns `{"data", "valid", "errors", "attempts"}`; the LLM gets one retry with the validation errors.
+- `POST /webhooks/ingest` `{"url"}` or `{"connector"}`: for external systems (CMS, CI). Authenticated with `X-Signature: sha256=<hex HMAC-SHA256 of the raw body with WEBHOOK_SECRET>` instead of an API key; returns a job id.
+
+Schedules: `python scripts/run_automations.py digest --since-hours 24` and `python scripts/run_automations.py watches` from cron.
+
 ### `GET /documents?size=20&after=<document_id>`
 - **Purpose**: List indexed source documents (one entry per document).
 - **Response**: `{"documents": [{"document_id", "source", "mime_type", "chunks", "indexed_at"}], "next": "<cursor or null>"}`
@@ -107,6 +120,13 @@ For scheduled syncs, run `python scripts/sync_sources.py [name...]` from cron or
 
 ### `DELETE /documents/{document_id}`
 - **Response**: `{"document_id": "3f2a...", "deleted_chunks": 12}`, or `404`.
+
+### `GET /ui`
+Chat page (no build step): enter an API key or a JWT, ask questions (streamed answers with sources) or switch to agent mode, upload a document, rate answers 👍/👎.
+
+### `POST /feedback`
+- **Payload**: `{"rating": "up" | "down", "session_id", "question", "answer", "comment"}` (`201`). Counted in `rag_agent_feedback_total{rating}`.
+- `GET /feedback?limit=50` (admin): most recent entries, limited to the caller's tenant in multi-tenant mode.
 
 ### `POST /sessions`
 - **Payload**: `{ "user_id": "u-42", "metadata": {"locale": "fr-FR"} }`

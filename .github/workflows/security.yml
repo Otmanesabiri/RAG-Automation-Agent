@@ -18,7 +18,7 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: '3.12'
         cache: 'pip'
@@ -57,7 +57,7 @@ jobs:
 
     - name: Dependency Review
       if: github.event_name == 'pull_request'
-      uses: actions/dependency-review-action@v4
+      uses: actions/dependency-review-action@v5
       with:
         fail-on-severity: moderate
 

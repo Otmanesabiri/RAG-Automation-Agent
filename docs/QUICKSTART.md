@@ -77,6 +77,8 @@ curl -N -X POST http://localhost:8000/query -H "X-API-Key: $KEY" -H "Content-Typ
 
 `scripts/manual/smoke_test_api.sh` runs a fuller scenario. The complete endpoint reference is in [api.md](api.md).
 
+Or open the chat page at http://localhost:8000/ui.
+
 ## 6. Tests
 
 ```bash

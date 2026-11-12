@@ -1,7 +1,7 @@
 # Dockerfile for RAG Automation Agent
 
 # --- Build stage: resolve and install pinned dependencies into a virtualenv ---
-FROM python:3.12-slim AS builder
+FROM python:3.15-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ \
     && rm -rf /var/lib/apt/lists/*
@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # --- Runtime stage: no compilers, only the virtualenv and the code ---
-FROM python:3.12-slim
+FROM python:3.15-slim
 
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
